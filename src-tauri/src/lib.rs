@@ -3,15 +3,18 @@ pub mod commands;
 pub mod domain;
 pub mod error;
 pub mod platform;
-
-use std::sync::RwLock;
+pub mod settings;
+pub mod storage;
 
 use app_state::AppState;
+use commands::settings::{clear_api_key, load_settings, save_settings};
 use commands::window::{
     open_settings_window, save_pet_position, start_pet_drag, toggle_chat_window,
 };
-use domain::{BootstrapState, PetStatus};
+use domain::BootstrapState;
 use error::AppError;
+use settings::{NativeCredentialStore, SettingsService};
+use storage::Database;
 
 #[tauri::command]
 fn get_bootstrap_state(state: tauri::State<'_, AppState>) -> Result<BootstrapState, AppError> {
@@ -21,6 +24,34 @@ fn get_bootstrap_state(state: tauri::State<'_, AppState>) -> Result<BootstrapSta
     })?;
 
     Ok(bootstrap.clone())
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    tauri::Builder::default()
+        .setup(|app| {
+            use tauri::Manager;
+
+            let database_path = app.path().app_data_dir()?.join("aibb.sqlite3");
+            let settings =
+                SettingsService::new(Database::open(database_path)?, NativeCredentialStore);
+            let bootstrap = tauri::async_runtime::block_on(settings.load_bootstrap_state())?;
+            app.manage(AppState::new(bootstrap, settings.clone()));
+            platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
+            Ok(())
+        })
+        .invoke_handler(tauri::generate_handler![
+            get_bootstrap_state,
+            toggle_chat_window,
+            open_settings_window,
+            start_pet_drag,
+            save_pet_position,
+            load_settings,
+            save_settings,
+            clear_api_key
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
 }
 
 #[cfg(test)]
@@ -46,9 +77,8 @@ mod tests {
     }
 
     #[test]
-    fn chat_and_settings_receive_no_capabilities() {
+    fn chat_receives_no_capabilities() {
         let capability_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
-        let restricted_windows = ["chat", "settings"];
 
         for entry in fs::read_dir(capability_directory).unwrap() {
             let path = entry.unwrap().path();
@@ -59,34 +89,30 @@ mod tests {
                 serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
             let windows = capability["windows"].as_array().unwrap();
 
-            for restricted_window in restricted_windows {
-                assert!(
-                    !windows.iter().any(|window| window == restricted_window),
-                    "{restricted_window} must not receive a capability in Task 2"
-                );
-            }
+            assert!(
+                !windows.iter().any(|window| window == "chat"),
+                "chat must not receive a capability"
+            );
         }
     }
-}
 
-#[cfg_attr(mobile, tauri::mobile_entry_point)]
-pub fn run() {
-    tauri::Builder::default()
-        .manage(AppState {
-            bootstrap: RwLock::new(BootstrapState {
-                first_run: true,
-                pet_status: PetStatus::Idle,
-                api_configured: false,
-            }),
-            pet_position: RwLock::new(None),
-        })
-        .invoke_handler(tauri::generate_handler![
-            get_bootstrap_state,
-            toggle_chat_window,
-            open_settings_window,
-            start_pet_drag,
-            save_pet_position
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+    #[test]
+    fn settings_capability_grants_only_sanitized_settings_commands() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("capabilities")
+            .join("settings.json");
+        assert!(path.exists(), "settings capability must exist");
+        let capability: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+
+        assert_eq!(capability["windows"], serde_json::json!(["settings"]));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!([
+                "allow-load-settings",
+                "allow-save-settings",
+                "allow-clear-api-key"
+            ])
+        );
+    }
 }

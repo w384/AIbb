@@ -1,6 +1,8 @@
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+};
 
-use crate::{app_state::AppState, error::AppError};
+use crate::{app_state::AppState, error::AppError, settings::SettingsService};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -59,12 +61,57 @@ pub fn start_pet_drag(window: &WebviewWindow) -> Result<(), AppError> {
 }
 
 pub fn save_pet_position(state: &AppState, x: i32, y: i32) -> Result<(), AppError> {
-    let mut position = state.pet_position.write().map_err(|_| AppError {
-        code: "stateUnavailable".to_string(),
-        message: "Application state is unavailable.".to_string(),
-    })?;
-    *position = Some((x, y));
-    Ok(())
+    state.settings.save_pet_position(x, y)
+}
+
+pub fn restored_pet_position(
+    settings: &SettingsService,
+    size: Size,
+    work_area: WorkArea,
+) -> Result<Option<Position>, AppError> {
+    Ok(settings
+        .persisted_settings()?
+        .pet_position
+        .map(|(x, y)| clamp_position(Position { x, y }, size, work_area)))
+}
+
+pub fn restore_pet_window_position(
+    app: &AppHandle,
+    settings: &SettingsService,
+) -> Result<(), AppError> {
+    let Some(window) = app.get_webview_window("pet") else {
+        return Ok(());
+    };
+    let Some(monitor) = window
+        .current_monitor()
+        .map_err(|error| window_error("read pet monitor", error))?
+    else {
+        return Ok(());
+    };
+    let outer_size = window
+        .outer_size()
+        .map_err(|error| window_error("read pet window size", error))?;
+    let work_area = monitor.work_area();
+    let Some(position) = restored_pet_position(
+        settings,
+        Size {
+            width: i32::try_from(outer_size.width).unwrap_or(i32::MAX),
+            height: i32::try_from(outer_size.height).unwrap_or(i32::MAX),
+        },
+        WorkArea {
+            x: work_area.position.x,
+            y: work_area.position.y,
+            width: i32::try_from(work_area.size.width).unwrap_or(i32::MAX),
+            height: i32::try_from(work_area.size.height).unwrap_or(i32::MAX),
+        },
+    )?
+    else {
+        return Ok(());
+    };
+
+    window
+        .set_position(PhysicalPosition::new(position.x, position.y))
+        .map_err(|error| window_error("restore pet window position", error))
 }
 
 pub fn clamp_position(position: Position, size: Size, work_area: WorkArea) -> Position {
@@ -118,12 +165,6 @@ fn window_error(action: &str, error: tauri::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::RwLock;
-
-    use crate::{
-        app_state::AppState,
-        domain::{BootstrapState, PetStatus},
-    };
 
     #[test]
     fn clamps_a_pet_that_would_be_off_the_right_and_bottom_edges() {
@@ -161,21 +202,5 @@ mod tests {
         );
 
         assert_eq!(clamped, Position { x: 10, y: 30 });
-    }
-
-    #[test]
-    fn saves_the_latest_pet_position_in_application_memory() {
-        let state = AppState {
-            bootstrap: RwLock::new(BootstrapState {
-                first_run: true,
-                pet_status: PetStatus::Idle,
-                api_configured: false,
-            }),
-            pet_position: RwLock::new(None),
-        };
-
-        save_pet_position(&state, 320, 180).unwrap();
-
-        assert_eq!(*state.pet_position.read().unwrap(), Some((320, 180)));
     }
 }
