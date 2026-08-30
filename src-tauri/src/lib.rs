@@ -18,6 +18,20 @@ fn get_bootstrap_state(state: tauri::State<'_, AppState>) -> Result<BootstrapSta
     Ok(bootstrap.clone())
 }
 
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn default_capability_grants_only_core_permissions() {
+        let capability: serde_json::Value =
+            serde_json::from_str(include_str!("../capabilities/default.json")).unwrap();
+
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!(["core:default"])
+        );
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -28,7 +42,6 @@ pub fn run() {
                 api_configured: false,
             }),
         })
-        .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![get_bootstrap_state])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
