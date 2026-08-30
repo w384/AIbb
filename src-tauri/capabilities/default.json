@@ -1,14 +1,10 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Minimal capabilities for AIbb application windows",
-  "windows": ["pet", "chat", "settings"],
+  "description": "Minimal renderer capabilities for the AIbb pet window",
+  "windows": ["pet"],
   "permissions": [
-    "core:window:allow-start-dragging",
     "core:window:allow-outer-position",
-    "core:window:allow-set-position",
-    "core:window:allow-show",
-    "core:window:allow-hide",
     "allow-toggle-chat-window",
     "allow-open-settings-window",
     "allow-start-pet-drag",

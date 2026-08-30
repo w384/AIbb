@@ -9,8 +9,14 @@ export interface PetGestureState {
 
 export type PetGestureAction =
   | { type: "pointerDown"; pointerId: number; x: number; y: number }
-  | { type: "pointerMove"; pointerId: number; x: number; y: number }
-  | { type: "pointerUp"; pointerId: number }
+  | {
+      type: "pointerMove";
+      pointerId: number;
+      x: number;
+      y: number;
+      leftButtonPressed: boolean;
+    }
+  | { type: "pointerEnd"; pointerId: number }
   | { type: "clickConsumed" };
 
 export const initialPetGestureState: PetGestureState = {
@@ -36,6 +42,9 @@ export function petReducer(
       if (state.pointerId !== action.pointerId || !state.origin || state.dragging) {
         return state;
       }
+      if (!action.leftButtonPressed) {
+        return { ...state, pointerId: null, origin: null, dragging: false };
+      }
       const movement = Math.hypot(
         action.x - state.origin.x,
         action.y - state.origin.y,
@@ -45,7 +54,7 @@ export function petReducer(
       }
       return { ...state, dragging: true, suppressClick: true };
     }
-    case "pointerUp":
+    case "pointerEnd":
       if (state.pointerId !== action.pointerId) {
         return state;
       }

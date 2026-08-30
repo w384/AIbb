@@ -25,6 +25,10 @@ export function PetSurface({ status }: PetSurfaceProps) {
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (!event.isPrimary || event.button !== 0) {
+      return;
+    }
+    event.currentTarget.setPointerCapture?.(event.pointerId);
     transition({
       type: "pointerDown",
       pointerId: event.pointerId,
@@ -40,14 +44,24 @@ export function PetSurface({ status }: PetSurfaceProps) {
       pointerId: event.pointerId,
       x: event.clientX,
       y: event.clientY,
+      leftButtonPressed: (event.buttons & 1) === 1,
     });
     if (!wasDragging && next.dragging) {
       void startPetDrag();
     }
   }
 
-  function handlePointerUp(event: ReactPointerEvent<HTMLButtonElement>) {
-    transition({ type: "pointerUp", pointerId: event.pointerId });
+  function finishPointer(
+    event: ReactPointerEvent<HTMLButtonElement>,
+    releaseCapture: boolean,
+  ) {
+    transition({ type: "pointerEnd", pointerId: event.pointerId });
+    if (
+      releaseCapture &&
+      event.currentTarget.hasPointerCapture?.(event.pointerId)
+    ) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
   }
 
   function handleClick() {
@@ -71,7 +85,9 @@ export function PetSurface({ status }: PetSurfaceProps) {
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
-        onPointerUp={handlePointerUp}
+        onPointerUp={(event) => finishPointer(event, true)}
+        onPointerCancel={(event) => finishPointer(event, true)}
+        onLostPointerCapture={(event) => finishPointer(event, false)}
       >
         <span aria-hidden="true">🤖</span>
       </button>
