@@ -1,0 +1,7 @@
+.worktrees/
+.superpowers/sdd/
+.learnings/
+node_modules/
+dist/
+target/
+
