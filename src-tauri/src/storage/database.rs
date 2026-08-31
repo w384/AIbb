@@ -117,7 +117,7 @@ impl Database {
             .map_err(|_| storage_error())
     }
 
-    fn connection(&self) -> Result<MutexGuard<'_, Connection>, AppError> {
+    pub(crate) fn connection(&self) -> Result<MutexGuard<'_, Connection>, AppError> {
         self.connection.lock().map_err(|_| storage_error())
     }
 }

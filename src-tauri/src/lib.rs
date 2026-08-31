@@ -2,17 +2,20 @@ pub mod app_state;
 pub mod commands;
 pub mod domain;
 pub mod error;
+pub mod memory;
 pub mod platform;
 pub mod settings;
 pub mod storage;
 
 use app_state::AppState;
+use commands::memory::clear_memory;
 use commands::settings::{clear_api_key, load_settings, save_settings};
 use commands::window::{
     open_settings_window, save_pet_position, start_pet_drag, toggle_chat_window,
 };
 use domain::BootstrapState;
 use error::AppError;
+use memory::MemoryRepository;
 use settings::{NativeCredentialStore, SettingsService};
 use storage::Database;
 
@@ -33,10 +36,11 @@ pub fn run() {
             use tauri::Manager;
 
             let database_path = app.path().app_data_dir()?.join("aibb.sqlite3");
-            let settings =
-                SettingsService::new(Database::open(database_path)?, NativeCredentialStore);
+            let database = Database::open(database_path)?;
+            let settings = SettingsService::new(database.clone(), NativeCredentialStore);
+            let memory = MemoryRepository::new(database);
             let bootstrap = tauri::async_runtime::block_on(settings.load_bootstrap_state())?;
-            app.manage(AppState::new(bootstrap, settings.clone()));
+            app.manage(AppState::new(bootstrap, settings.clone(), memory));
             platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
             Ok(())
         })
@@ -48,7 +52,8 @@ pub fn run() {
             save_pet_position,
             load_settings,
             save_settings,
-            clear_api_key
+            clear_api_key,
+            clear_memory
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

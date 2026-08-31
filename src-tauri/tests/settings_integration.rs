@@ -4,6 +4,7 @@ use aibb_desktop_pet_lib::{
     app_state::AppState,
     domain::{BootstrapState, PetStatus, WebMode},
     error::AppError,
+    memory::MemoryRepository,
     platform::window_controller::{self, restored_pet_position, Position, Size, WorkArea},
     settings::{ApiSettings, CredentialStore, SaveSettings, SettingsService},
     storage::Database,
@@ -288,6 +289,7 @@ fn persists_and_clamps_the_pet_position_after_restart() {
             api_configured: false,
         },
         service,
+        MemoryRepository::new(db.handle()),
     );
 
     window_controller::save_pet_position(&state, 1900, 1060).unwrap();

@@ -26,6 +26,60 @@ pub enum WebMode {
     Off,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    User,
+    Assistant,
+    System,
+}
+
+impl Role {
+    pub fn as_storage_value(self) -> &'static str {
+        match self {
+            Self::User => "user",
+            Self::Assistant => "assistant",
+            Self::System => "system",
+        }
+    }
+
+    pub fn from_storage_value(value: &str) -> Option<Self> {
+        match value {
+            "user" => Some(Self::User),
+            "assistant" => Some(Self::Assistant),
+            "system" => Some(Self::System),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct Message {
+    pub id: String,
+    pub role: Role,
+    pub content: String,
+    pub created_at: i64,
+    pub summarized_at: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct MemoryContext {
+    pub current_input: String,
+    pub last_assistant_paragraph: Option<String>,
+    pub recent_messages: Vec<Message>,
+    pub summary: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryCandidate {
+    pub messages: Vec<Message>,
+    pub total_characters: usize,
+    pub through_message_created_at: i64,
+}
+
 impl WebMode {
     pub fn as_storage_value(self) -> &'static str {
         match self {
