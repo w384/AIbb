@@ -35,6 +35,7 @@ static BLOCKED_NETWORKS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
         "64:ff9b::/96",
         "64:ff9b:1::/48",
         "100::/64",
+        "100:0:0:1::/64",
         "2001::/23",
         "2001:2::/48",
         "2001:db8::/32",
@@ -49,6 +50,10 @@ static BLOCKED_NETWORKS: LazyLock<Vec<IpNet>> = LazyLock::new(|| {
     .into_iter()
     .map(|network| IpNet::from_str(network).expect("blocked network constants must be valid"))
     .collect()
+});
+
+static ALLOCATED_GLOBAL_UNICAST_V6: LazyLock<IpNet> = LazyLock::new(|| {
+    IpNet::from_str("2000::/3").expect("global unicast network constant must be valid")
 });
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -183,9 +188,12 @@ fn literal_address(url: &Url) -> Option<IpAddr> {
 }
 
 fn ensure_public_address(address: IpAddr) -> Result<(), AppError> {
-    if BLOCKED_NETWORKS
-        .iter()
-        .any(|network| network.contains(&address))
+    let outside_allocated_global_unicast =
+        matches!(address, IpAddr::V6(_)) && !ALLOCATED_GLOBAL_UNICAST_V6.contains(&address);
+    if outside_allocated_global_unicast
+        || BLOCKED_NETWORKS
+            .iter()
+            .any(|network| network.contains(&address))
     {
         return Err(unsafe_url());
     }

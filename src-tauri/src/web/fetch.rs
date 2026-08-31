@@ -10,8 +10,9 @@ use std::{
 
 use crate::error::{AppError, ErrorCode};
 use async_trait::async_trait;
-use encoding_rs::{Encoding, UTF_8};
+use encoding_rs::{Encoding, UTF_8, WINDOWS_1252};
 use futures_util::{Stream, StreamExt};
+use scraper::{Html, Selector};
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
@@ -24,6 +25,7 @@ const USER_AGENT: &str = "AIbb/0.1 public-read-only";
 const MAX_RESPONSE_BYTES: usize = 2_000_000;
 const MAX_REDIRECTS: usize = 3;
 const MAX_PAGES: usize = 8;
+const HTML_ENCODING_SNIFF_BYTES: usize = 1_024;
 const DEFAULT_PAGE_TIMEOUT: Duration = Duration::from_secs(12);
 
 pub type BodyStream =
@@ -223,9 +225,8 @@ impl SafePageFetcher {
                 .as_deref()
                 .ok_or_else(|| AppError::from_code(ErrorCode::UnsupportedContent))?;
             let media_type = allowed_media_type(content_type)?;
-            let encoding = content_encoding(content_type);
             let bytes = read_limited_body(&mut response.body, &self.cancellation).await?;
-            let source = decode_body(&bytes, encoding);
+            let source = decode_body(&bytes, media_type, content_type);
             let final_url = target.url().clone();
             let media_type = media_type.to_owned();
             let extracted =
@@ -276,14 +277,15 @@ fn allowed_media_type(content_type: &str) -> Result<&str, AppError> {
     }
 }
 
-fn content_encoding(content_type: &str) -> &'static Encoding {
+fn content_encoding(content_type: &str) -> Option<&'static Encoding> {
     content_type
         .split(';')
         .skip(1)
         .filter_map(|parameter| parameter.split_once('='))
         .find(|(name, _)| name.trim().eq_ignore_ascii_case("charset"))
-        .and_then(|(_, value)| Encoding::for_label(value.trim().trim_matches('"').as_bytes()))
-        .unwrap_or(UTF_8)
+        .and_then(|(_, value)| {
+            Encoding::for_label(value.trim().trim_matches(['"', '\'']).as_bytes())
+        })
 }
 
 async fn read_limited_body(
@@ -313,9 +315,44 @@ async fn read_limited_body(
     }
 }
 
-fn decode_body(bytes: &[u8], encoding: &'static Encoding) -> String {
-    let (decoded, _, _) = encoding.decode(bytes);
+fn decode_body(bytes: &[u8], media_type: &str, content_type: &str) -> String {
+    let encoding = Encoding::for_bom(bytes)
+        .map(|(encoding, _)| encoding)
+        .or_else(|| content_encoding(content_type))
+        .or_else(|| {
+            (media_type == "text/html")
+                .then(|| sniff_html_encoding(bytes))
+                .flatten()
+        })
+        .unwrap_or_else(|| {
+            if media_type == "text/html" {
+                WINDOWS_1252
+            } else {
+                UTF_8
+            }
+        });
+    let (decoded, _) = encoding.decode_with_bom_removal(bytes);
     decoded.into_owned()
+}
+
+fn sniff_html_encoding(bytes: &[u8]) -> Option<&'static Encoding> {
+    let prefix = &bytes[..bytes.len().min(HTML_ENCODING_SNIFF_BYTES)];
+    let (prefix, _, _) = WINDOWS_1252.decode(prefix);
+    let document = Html::parse_fragment(&prefix);
+    let selector = Selector::parse("meta").expect("static meta selector must be valid");
+
+    document.select(&selector).find_map(|element| {
+        if let Some(label) = element.value().attr("charset") {
+            return Encoding::for_label(label.trim().as_bytes());
+        }
+        let is_content_type_pragma = element
+            .value()
+            .attr("http-equiv")
+            .is_some_and(|value| value.eq_ignore_ascii_case("content-type"));
+        is_content_type_pragma
+            .then(|| element.value().attr("content").and_then(content_encoding))
+            .flatten()
+    })
 }
 
 fn public_page_error(error: impl std::fmt::Display) -> AppError {

@@ -10,8 +10,8 @@ use aibb_desktop_pet_lib::{
     error::{AppError, ErrorCode},
     web::{
         resolve_public_target, validate_url, BodyStream, DnsResolver, DuckDuckGoHtmlSearch,
-        FetchBudget, HttpConnector, HttpResponse, PageFetcher, ResolvedTarget, SafePageFetcher,
-        SearchProvider,
+        FetchBudget, FetchedPage, HttpConnector, HttpResponse, PageFetcher, ResolvedTarget,
+        SafePageFetcher, SearchProvider,
     },
 };
 use async_trait::async_trait;
@@ -200,6 +200,21 @@ fn html_response(html: &str) -> HttpResponse {
     )
 }
 
+async fn fetch_encoded_page(content_type: &str, bytes: Vec<u8>) -> FetchedPage {
+    let resolver = Arc::new(FakeResolver::with_answer(
+        "encoding.example",
+        &["93.184.216.34"],
+    ));
+    let connector = Arc::new(FakeConnector::with_steps(vec![ConnectorStep::Response(
+        response(200, Some(content_type), None, vec![Ok(bytes)]),
+    )]));
+
+    fetcher(resolver, connector, CancellationToken::new())
+        .fetch("https://encoding.example/article")
+        .await
+        .unwrap()
+}
+
 fn fetcher(
     resolver: Arc<dyn DnsResolver>,
     connector: Arc<dyn HttpConnector>,
@@ -240,11 +255,13 @@ fn blocks_literal_local_private_link_local_metadata_and_non_http_targets() {
         "http://[::1]/",
         "http://[::ffff:127.0.0.1]/",
         "http://[64:ff9b::7f00:1]/",
+        "http://[100:0:0:1::1]/",
         "http://[100::1]/",
         "http://[2001:2::1]/",
         "http://[2001:db8::1]/",
         "http://[2002:7f00:1::]/",
         "http://[3fff::1]/",
+        "http://[400::1]/",
         "http://[fc00::1]/",
         "http://[fd00:ec2::254]/latest/meta-data/",
         "http://[fe80::1]/",
@@ -295,6 +312,20 @@ async fn rejects_the_entire_dns_answer_when_any_candidate_is_dangerous() {
         .unwrap_err();
 
     assert_eq!(error.code, ErrorCode::UnsafeUrl.as_str());
+}
+
+#[tokio::test]
+async fn rejects_unallocated_or_reserved_ipv6_returned_by_dns() {
+    for address in ["100:0:0:1::1", "400::1"] {
+        let resolver = Arc::new(FakeResolver::with_answer("reserved.example", &[address]));
+        let url = validate_url("https://reserved.example/article").unwrap();
+
+        let error = resolve_public_target(url, resolver, &CancellationToken::new())
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::UnsafeUrl.as_str(), "{address}");
+    }
 }
 
 #[tokio::test]
@@ -731,6 +762,83 @@ async fn ignores_non_http_canonical_urls() {
         .unwrap();
 
     assert_eq!(page.canonical_url, "https://canonical.example/original");
+}
+
+#[tokio::test]
+async fn html_uses_meta_charset_when_the_http_header_has_none() {
+    let page = fetch_encoded_page(
+        "text/html",
+        b"<html><head><meta charset='windows-1252'></head><body>caf\xe9</body></html>".to_vec(),
+    )
+    .await;
+
+    assert_eq!(page.text, "café");
+}
+
+#[tokio::test]
+async fn html_bom_takes_priority_over_http_and_meta_charsets() {
+    let mut bytes =
+        b"\xef\xbb\xbf<html><head><meta charset='windows-1252'></head><body>caf".to_vec();
+    bytes.extend_from_slice("é</body></html>".as_bytes());
+
+    let page = fetch_encoded_page("text/html; charset=windows-1252", bytes).await;
+
+    assert_eq!(page.text, "café");
+}
+
+#[tokio::test]
+async fn html_http_charset_takes_priority_over_meta_charset() {
+    let page = fetch_encoded_page(
+        "text/html; charset=windows-1252",
+        b"<html><head><meta charset='utf-8'></head><body>caf\xe9</body></html>".to_vec(),
+    )
+    .await;
+
+    assert_eq!(page.text, "café");
+}
+
+#[tokio::test]
+async fn html_uses_http_equiv_meta_charset() {
+    let page = fetch_encoded_page(
+        "text/html",
+        b"<html><head><meta http-equiv='content-type' content='text/html; charset=windows-1252'></head><body>caf\xe9</body></html>".to_vec(),
+    )
+    .await;
+
+    assert_eq!(page.text, "café");
+}
+
+#[tokio::test]
+async fn html_without_an_encoding_declaration_defaults_to_windows_1252() {
+    let page = fetch_encoded_page("text/html", b"<html><body>caf\xe9</body></html>".to_vec()).await;
+
+    assert_eq!(page.text, "café");
+}
+
+#[tokio::test]
+async fn html_meta_sniff_reads_only_the_first_1024_bytes() {
+    let mut bytes = b"<html><head>".to_vec();
+    bytes.extend(std::iter::repeat_n(b' ', 1_024));
+    bytes.extend_from_slice(b"<meta charset='utf-8'></head><body>caf\xe9</body></html>");
+
+    let page = fetch_encoded_page("text/html", bytes).await;
+
+    assert_eq!(page.text, "café");
+}
+
+#[tokio::test]
+async fn plain_text_and_xhtml_without_charset_keep_utf8_defaults() {
+    for (content_type, bytes) in [
+        ("text/plain", "café".as_bytes().to_vec()),
+        (
+            "application/xhtml+xml",
+            "<html><body>café</body></html>".as_bytes().to_vec(),
+        ),
+    ] {
+        let page = fetch_encoded_page(content_type, bytes).await;
+
+        assert_eq!(page.text, "café", "{content_type}");
+    }
 }
 
 #[tokio::test]
