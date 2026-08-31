@@ -2,9 +2,11 @@ pub mod app_state;
 pub mod commands;
 pub mod domain;
 pub mod error;
+pub mod exploration;
 pub mod llm;
 pub mod memory;
 pub mod platform;
+pub mod prompts;
 pub mod settings;
 pub mod storage;
 

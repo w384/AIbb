@@ -80,6 +80,26 @@ pub struct SummaryCandidate {
     pub through_message_created_at: i64,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebMaterial {
+    pub pages: Vec<String>,
+}
+
+impl WebMaterial {
+    pub fn empty() -> Self {
+        Self::default()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplorationResult {
+    pub items: [String; 4],
+    pub next_outing_request: String,
+    pub raw_response: String,
+}
+
 impl WebMode {
     pub fn as_storage_value(self) -> &'static str {
         match self {
