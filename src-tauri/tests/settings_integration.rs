@@ -10,7 +10,10 @@ use aibb_desktop_pet_lib::{
 };
 use async_trait::async_trait;
 use tempfile::TempDir;
-use tokio::sync::Mutex;
+use tokio::{
+    sync::{Mutex, Notify},
+    time::{timeout, Duration},
+};
 
 #[derive(Clone, Default)]
 struct FakeCredentialStore {
@@ -85,6 +88,56 @@ impl CredentialStore for FailingSetCredentialStore {
             code: format!("credential-set-failed-{api_key}"),
             message: format!("inline Authorization: Bearer {api_key}"),
         })
+    }
+
+    async fn clear(&self) -> Result<(), AppError> {
+        *self.value.lock().await = None;
+        Ok(())
+    }
+}
+
+#[derive(Clone)]
+struct PausingCredentialStore {
+    value: Arc<Mutex<Option<String>>>,
+    save_a_entered: Arc<Notify>,
+    release_save_a: Arc<Notify>,
+    save_b_entered: Arc<Notify>,
+}
+
+impl PausingCredentialStore {
+    fn with_existing_key(api_key: &str) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(Some(api_key.to_owned()))),
+            save_a_entered: Arc::new(Notify::new()),
+            release_save_a: Arc::new(Notify::new()),
+            save_b_entered: Arc::new(Notify::new()),
+        }
+    }
+}
+
+#[async_trait]
+impl CredentialStore for PausingCredentialStore {
+    async fn get(&self) -> Result<Option<String>, AppError> {
+        Ok(self.value.lock().await.clone())
+    }
+
+    async fn set(&self, api_key: &str) -> Result<(), AppError> {
+        match api_key {
+            "key-a" => {
+                self.save_a_entered.notify_one();
+                self.release_save_a.notified().await;
+                Err(AppError {
+                    code: "saveAFailed".into(),
+                    message: "save A failed".into(),
+                })
+            }
+            "key-b" => {
+                self.save_b_entered.notify_one();
+                *self.value.lock().await = Some(api_key.to_owned());
+                Ok(())
+            }
+            _ => panic!("unexpected key in concurrency test"),
+        }
     }
 
     async fn clear(&self) -> Result<(), AppError> {
@@ -465,4 +518,86 @@ async fn returns_fixed_public_error_when_settings_rollback_fails() {
     let serialized = serde_json::to_string(&error).unwrap();
     assert!(!serialized.contains("old-protected-key"));
     assert!(!serialized.contains("new-protected-key"));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn serializes_concurrent_saves_across_database_and_credential_operations() {
+    let db = TestDatabase::new();
+    let vault = PausingCredentialStore::with_existing_key("old-key");
+    let service = SettingsService::new(db.handle(), vault.clone());
+    service
+        .save(SaveSettings {
+            api_base: "https://old.example/v1".into(),
+            model: "old-model".into(),
+            api_key: None,
+            web_mode: WebMode::Auto,
+            always_on_top: true,
+            autostart: false,
+        })
+        .await
+        .unwrap();
+
+    let save_a_service = service.clone();
+    let save_a = tokio::spawn(async move {
+        save_a_service
+            .save(SaveSettings {
+                api_base: "https://a.example/v1".into(),
+                model: "model-a".into(),
+                api_key: Some("key-a".into()),
+                web_mode: WebMode::Off,
+                always_on_top: false,
+                autostart: true,
+            })
+            .await
+    });
+    timeout(Duration::from_secs(1), vault.save_a_entered.notified())
+        .await
+        .expect("save A must reach the paused credential operation");
+
+    let save_b_service = service.clone();
+    let save_b = tokio::spawn(async move {
+        save_b_service
+            .save(SaveSettings {
+                api_base: "https://b.example/v1".into(),
+                model: "model-b".into(),
+                api_key: Some("key-b".into()),
+                web_mode: WebMode::Force,
+                always_on_top: true,
+                autostart: false,
+            })
+            .await
+    });
+
+    assert!(
+        timeout(Duration::from_millis(150), vault.save_b_entered.notified())
+            .await
+            .is_err(),
+        "save B entered the credential store before save A completed"
+    );
+
+    vault.release_save_a.notify_one();
+    let save_a_error = timeout(Duration::from_secs(1), save_a)
+        .await
+        .expect("save A must finish after release")
+        .unwrap()
+        .unwrap_err();
+    assert_eq!(save_a_error.code, "credentialStoreUnavailable");
+    timeout(Duration::from_secs(1), save_b)
+        .await
+        .expect("save B must finish after save A rolls back")
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        service.load().await.unwrap(),
+        ApiSettings {
+            api_base: "https://b.example/v1".into(),
+            model: "model-b".into(),
+            web_mode: WebMode::Force,
+            always_on_top: true,
+            autostart: false,
+            api_configured: true,
+        }
+    );
+    assert_eq!(vault.get().await.unwrap().as_deref(), Some("key-b"));
 }

@@ -70,8 +70,7 @@ pub fn restored_pet_position(
     work_areas: &[WorkArea],
 ) -> Result<Option<Position>, AppError> {
     Ok(settings
-        .persisted_settings()?
-        .pet_position
+        .pet_position()?
         .map(|(x, y)| clamp_position_to_work_areas(Position { x, y }, size, work_areas)))
 }
 

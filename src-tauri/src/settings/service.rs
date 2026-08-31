@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
+use tokio::sync::Mutex as AsyncMutex;
 
 use crate::{
     domain::{BootstrapState, PetStatus, WebMode},
@@ -36,6 +37,7 @@ pub struct SaveSettings {
 pub struct SettingsService {
     database: Database,
     credentials: Arc<dyn CredentialStore>,
+    operation: Arc<AsyncMutex<()>>,
 }
 
 impl SettingsService {
@@ -46,11 +48,13 @@ impl SettingsService {
         Self {
             database,
             credentials: Arc::new(credentials),
+            operation: Arc::new(AsyncMutex::new(())),
         }
     }
 
     pub async fn load(&self) -> Result<ApiSettings, AppError> {
-        let (persisted, api_configured) = self.load_persisted_state().await?;
+        let _operation = self.operation.lock().await;
+        let (persisted, api_configured) = self.load_persisted_state_unlocked().await?;
         let web_mode = parse_web_mode(&persisted)?;
 
         Ok(ApiSettings {
@@ -64,6 +68,7 @@ impl SettingsService {
     }
 
     pub async fn save(&self, settings: SaveSettings) -> Result<(), AppError> {
+        let _operation = self.operation.lock().await;
         let previous = self.database.load_settings()?;
         self.database.save_settings(
             &settings.api_base,
@@ -96,6 +101,7 @@ impl SettingsService {
     }
 
     pub async fn clear_api_key(&self) -> Result<(), AppError> {
+        let _operation = self.operation.lock().await;
         self.credentials
             .clear()
             .await
@@ -103,11 +109,13 @@ impl SettingsService {
     }
 
     pub async fn mark_connection_verified(&self) -> Result<(), AppError> {
+        let _operation = self.operation.lock().await;
         self.database.set_first_run_complete()
     }
 
     pub async fn load_bootstrap_state(&self) -> Result<BootstrapState, AppError> {
-        let (persisted, api_configured) = self.load_persisted_state().await?;
+        let _operation = self.operation.lock().await;
+        let (persisted, api_configured) = self.load_persisted_state_unlocked().await?;
 
         Ok(BootstrapState {
             first_run: !persisted.first_run_complete,
@@ -116,15 +124,15 @@ impl SettingsService {
         })
     }
 
-    pub fn persisted_settings(&self) -> Result<PersistedSettings, AppError> {
-        self.database.load_settings()
+    pub fn pet_position(&self) -> Result<Option<(i32, i32)>, AppError> {
+        self.database.load_pet_position()
     }
 
     pub fn save_pet_position(&self, x: i32, y: i32) -> Result<(), AppError> {
         self.database.save_pet_position(x, y)
     }
 
-    async fn load_persisted_state(&self) -> Result<(PersistedSettings, bool), AppError> {
+    async fn load_persisted_state_unlocked(&self) -> Result<(PersistedSettings, bool), AppError> {
         let persisted = self.database.load_settings()?;
         let api_configured = self
             .credentials

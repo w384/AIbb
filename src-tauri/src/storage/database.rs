@@ -93,6 +93,20 @@ impl Database {
             .map_err(|_| storage_error())
     }
 
+    pub fn load_pet_position(&self) -> Result<Option<(i32, i32)>, AppError> {
+        self.connection()?
+            .query_row(
+                "SELECT pet_x, pet_y FROM app_settings WHERE singleton = 1",
+                [],
+                |row| {
+                    let pet_x = row.get::<_, Option<i32>>(0)?;
+                    let pet_y = row.get::<_, Option<i32>>(1)?;
+                    Ok(pet_x.zip(pet_y))
+                },
+            )
+            .map_err(|_| storage_error())
+    }
+
     pub fn save_pet_position(&self, x: i32, y: i32) -> Result<(), AppError> {
         self.connection()?
             .execute(
