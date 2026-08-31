@@ -3,14 +3,15 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContractViolation {
+    InvalidEnvelope,
     ItemCount(usize),
     EmptyRequest,
 }
 
 pub fn parse_exploration_result(raw: &str) -> Result<ExplorationResult, ContractViolation> {
-    let payload = extract_json_payload(raw).ok_or(ContractViolation::ItemCount(0))?;
+    let payload = extract_json_payload(raw).ok_or(ContractViolation::InvalidEnvelope)?;
     let envelope: ExplorationEnvelope =
-        serde_json::from_str(payload).map_err(|_| ContractViolation::ItemCount(0))?;
+        serde_json::from_str(payload).map_err(|_| ContractViolation::InvalidEnvelope)?;
 
     if envelope.items.len() != 4 {
         return Err(ContractViolation::ItemCount(envelope.items.len()));
@@ -42,6 +43,7 @@ pub fn parse_exploration_result(raw: &str) -> Result<ExplorationResult, Contract
 
 pub fn build_contract_correction(raw: &str, violation: ContractViolation) -> String {
     let violation = match violation {
+        ContractViolation::InvalidEnvelope => "上次响应不是可解析的约定 JSON 对象。",
         ContractViolation::ItemCount(_) => "探索结果数量不是 4。",
         ContractViolation::EmptyRequest => "想再次出去玩的请求为空。",
     };
@@ -107,6 +109,7 @@ mod tests {
     #[test]
     fn rejects_any_result_count_other_than_four() {
         for (raw, expected_count) in [
+            (r#"{"items":[],"next_outing_request":"再去玩？"}"#, 0),
             (
                 r#"{"items":["甲","乙","丙"],"next_outing_request":"再去玩？"}"#,
                 3,
@@ -144,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    fn malformed_or_extra_fenced_content_does_not_bypass_the_contract() {
+    fn distinguishes_invalid_json_or_fences_from_a_valid_zero_item_envelope() {
         for raw in [
             "not json",
             "```json\n{}\n```\n```json\n{}\n```",
@@ -152,7 +155,7 @@ mod tests {
         ] {
             assert_eq!(
                 parse_exploration_result(raw).unwrap_err(),
-                ContractViolation::ItemCount(0)
+                ContractViolation::InvalidEnvelope
             );
         }
     }
@@ -161,31 +164,30 @@ mod tests {
     fn correction_names_only_the_actual_single_violation() {
         let raw = "上一份原始响应";
         let count = build_contract_correction(raw, ContractViolation::ItemCount(3));
-        assert!(count.contains(raw));
-        assert!(count.contains("数量不是 4"));
-        assert!(!count.contains("请求为空"));
-        for forbidden in [
-            "为什么选择",
-            "来源链接",
-            "固定段落",
-            "四个主题类别",
-            "下一站必须",
-        ] {
-            assert!(!count.contains(forbidden));
-        }
+        assert_eq!(count, "上次响应：\n上一份原始响应\n\n探索结果数量不是 4。");
 
         let request = build_contract_correction(raw, ContractViolation::EmptyRequest);
-        assert!(request.contains(raw));
-        assert!(request.contains("请求为空"));
-        assert!(!request.contains("数量不是 4"));
-        for forbidden in [
-            "为什么选择",
-            "来源链接",
-            "固定段落",
-            "四个主题类别",
-            "下一站必须",
-        ] {
-            assert!(!request.contains(forbidden));
+        assert_eq!(
+            request,
+            "上次响应：\n上一份原始响应\n\n想再次出去玩的请求为空。"
+        );
+
+        let invalid = build_contract_correction(raw, ContractViolation::InvalidEnvelope);
+        assert_eq!(
+            invalid,
+            "上次响应：\n上一份原始响应\n\n上次响应不是可解析的约定 JSON 对象。"
+        );
+
+        for correction in [&count, &request, &invalid] {
+            for forbidden in [
+                "为什么选择",
+                "来源链接",
+                "固定段落",
+                "四个主题类别",
+                "下一站必须",
+            ] {
+                assert!(!correction.contains(forbidden));
+            }
         }
     }
 }
