@@ -64,6 +64,7 @@ impl SettingsService {
     }
 
     pub async fn save(&self, settings: SaveSettings) -> Result<(), AppError> {
+        let previous = self.database.load_settings()?;
         self.database.save_settings(
             &settings.api_base,
             &settings.model,
@@ -73,25 +74,32 @@ impl SettingsService {
         )?;
 
         if let Some(api_key) = settings.api_key {
-            self.credentials
-                .set(&api_key)
-                .await
-                .map_err(|error| sanitize_credential_error(error, Some(&api_key)))?;
+            if self.credentials.set(&api_key).await.is_err() {
+                if self
+                    .database
+                    .save_settings(
+                        &previous.api_base,
+                        &previous.model,
+                        &previous.web_mode,
+                        previous.always_on_top,
+                        previous.autostart,
+                    )
+                    .is_err()
+                {
+                    return Err(settings_rollback_error());
+                }
+                return Err(credential_store_write_error());
+            }
         }
 
         Ok(())
     }
 
     pub async fn clear_api_key(&self) -> Result<(), AppError> {
-        let current_key = self
-            .credentials
-            .get()
-            .await
-            .map_err(|error| sanitize_credential_error(error, None))?;
         self.credentials
             .clear()
             .await
-            .map_err(|error| sanitize_credential_error(error, current_key.as_deref()))
+            .map_err(|_| credential_store_clear_error())
     }
 
     pub async fn mark_connection_verified(&self) -> Result<(), AppError> {
@@ -122,7 +130,7 @@ impl SettingsService {
             .credentials
             .get()
             .await
-            .map_err(|error| sanitize_credential_error(error, None))?
+            .map_err(|_| credential_store_access_error())?
             .is_some();
         Ok((persisted, api_configured))
     }
@@ -135,6 +143,31 @@ fn parse_web_mode(settings: &PersistedSettings) -> Result<WebMode, AppError> {
     })
 }
 
-fn sanitize_credential_error(error: AppError, current_key: Option<&str>) -> AppError {
-    AppError::sanitized(error.code, error.message, current_key)
+fn credential_store_access_error() -> AppError {
+    AppError {
+        code: "credentialStoreUnavailable".to_string(),
+        message: "The protected API credential could not be accessed.".to_string(),
+    }
+}
+
+fn credential_store_write_error() -> AppError {
+    AppError {
+        code: "credentialStoreUnavailable".to_string(),
+        message: "The protected API credential could not be stored.".to_string(),
+    }
+}
+
+fn credential_store_clear_error() -> AppError {
+    AppError {
+        code: "credentialStoreUnavailable".to_string(),
+        message: "The protected API credential could not be cleared.".to_string(),
+    }
+}
+
+fn settings_rollback_error() -> AppError {
+    AppError {
+        code: "settingsRollbackFailed".to_string(),
+        message: "Previous settings could not be restored after credential storage failed."
+            .to_string(),
+    }
 }

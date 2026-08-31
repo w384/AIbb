@@ -61,6 +61,38 @@ impl CredentialStore for LeakyCredentialStore {
     }
 }
 
+#[derive(Clone)]
+struct FailingSetCredentialStore {
+    value: Arc<Mutex<Option<String>>>,
+}
+
+impl FailingSetCredentialStore {
+    fn with_existing_key(api_key: &str) -> Self {
+        Self {
+            value: Arc::new(Mutex::new(Some(api_key.to_owned()))),
+        }
+    }
+}
+
+#[async_trait]
+impl CredentialStore for FailingSetCredentialStore {
+    async fn get(&self) -> Result<Option<String>, AppError> {
+        Ok(self.value.lock().await.clone())
+    }
+
+    async fn set(&self, api_key: &str) -> Result<(), AppError> {
+        Err(AppError {
+            code: format!("credential-set-failed-{api_key}"),
+            message: format!("inline Authorization: Bearer {api_key}"),
+        })
+    }
+
+    async fn clear(&self) -> Result<(), AppError> {
+        *self.value.lock().await = None;
+        Ok(())
+    }
+}
+
 impl TestDatabase {
     fn new() -> Self {
         let directory = tempfile::tempdir().unwrap();
@@ -214,12 +246,12 @@ fn persists_and_clamps_the_pet_position_after_restart() {
             width: 220,
             height: 240,
         },
-        WorkArea {
+        &[WorkArea {
             x: 0,
             y: 0,
             width: 1920,
             height: 1080,
-        },
+        }],
     )
     .unwrap();
 
@@ -325,8 +357,112 @@ async fn sanitizes_credential_failures_before_returning_app_error() {
         .await
         .unwrap_err();
 
+    assert_eq!(error.code, "credentialStoreUnavailable");
+    assert_eq!(
+        error.message,
+        "The protected API credential could not be stored."
+    );
     assert!(!error.to_string().contains("sk-do-not-log"));
     assert!(!serde_json::to_string(&error)
         .unwrap()
         .contains("sk-do-not-log"));
+}
+
+#[tokio::test]
+async fn restores_previous_non_secret_settings_when_credential_set_fails() {
+    let db = TestDatabase::new();
+    let vault = FailingSetCredentialStore::with_existing_key("old-protected-key");
+    let service = SettingsService::new(db.handle(), vault.clone());
+    service
+        .save(SaveSettings {
+            api_base: "https://old.example/v1".into(),
+            model: "old-model".into(),
+            api_key: None,
+            web_mode: WebMode::Off,
+            always_on_top: false,
+            autostart: true,
+        })
+        .await
+        .unwrap();
+
+    let error = service
+        .save(SaveSettings {
+            api_base: "https://new.example/v1".into(),
+            model: "new-model".into(),
+            api_key: Some("new-protected-key".into()),
+            web_mode: WebMode::Force,
+            always_on_top: true,
+            autostart: false,
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(
+        service.load().await.unwrap(),
+        ApiSettings {
+            api_base: "https://old.example/v1".into(),
+            model: "old-model".into(),
+            web_mode: WebMode::Off,
+            always_on_top: false,
+            autostart: true,
+            api_configured: true,
+        }
+    );
+    assert_eq!(
+        vault.get().await.unwrap().as_deref(),
+        Some("old-protected-key")
+    );
+    assert_eq!(error.code, "credentialStoreUnavailable");
+    assert_eq!(
+        error.message,
+        "The protected API credential could not be stored."
+    );
+}
+
+#[tokio::test]
+async fn returns_fixed_public_error_when_settings_rollback_fails() {
+    let db = TestDatabase::new();
+    let vault = FailingSetCredentialStore::with_existing_key("old-protected-key");
+    let service = SettingsService::new(db.handle(), vault);
+    service
+        .save(SaveSettings {
+            api_base: "https://old.example/v1".into(),
+            model: "old-model".into(),
+            api_key: None,
+            web_mode: WebMode::Auto,
+            always_on_top: true,
+            autostart: false,
+        })
+        .await
+        .unwrap();
+    rusqlite::Connection::open(db.path())
+        .unwrap()
+        .execute_batch(
+            "CREATE TRIGGER reject_old_settings_before_update \
+             BEFORE UPDATE ON app_settings \
+             WHEN NEW.api_base = 'https://old.example/v1' \
+             BEGIN SELECT RAISE(FAIL, 'Authorization: Bearer old-protected-key'); END;",
+        )
+        .unwrap();
+
+    let error = service
+        .save(SaveSettings {
+            api_base: "https://new.example/v1".into(),
+            model: "new-model".into(),
+            api_key: Some("new-protected-key".into()),
+            web_mode: WebMode::Force,
+            always_on_top: false,
+            autostart: true,
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "settingsRollbackFailed");
+    assert_eq!(
+        error.message,
+        "Previous settings could not be restored after credential storage failed."
+    );
+    let serialized = serde_json::to_string(&error).unwrap();
+    assert!(!serialized.contains("old-protected-key"));
+    assert!(!serialized.contains("new-protected-key"));
 }
