@@ -123,8 +123,8 @@ impl Database {
 }
 
 fn storage_error() -> AppError {
-    AppError {
-        code: "storageUnavailable".to_string(),
-        message: "Application settings could not be accessed.".to_string(),
-    }
+    AppError::new(
+        "storageUnavailable",
+        "Application settings could not be accessed.",
+    )
 }

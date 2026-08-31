@@ -2,6 +2,7 @@ pub mod app_state;
 pub mod commands;
 pub mod domain;
 pub mod error;
+pub mod llm;
 pub mod memory;
 pub mod platform;
 pub mod settings;
@@ -9,7 +10,7 @@ pub mod storage;
 
 use app_state::AppState;
 use commands::memory::clear_memory;
-use commands::settings::{clear_api_key, load_settings, save_settings};
+use commands::settings::{clear_api_key, load_settings, save_settings, test_connection};
 use commands::window::{
     open_settings_window, save_pet_position, start_pet_drag, toggle_chat_window,
 };
@@ -21,10 +22,10 @@ use storage::Database;
 
 #[tauri::command]
 fn get_bootstrap_state(state: tauri::State<'_, AppState>) -> Result<BootstrapState, AppError> {
-    let bootstrap = state.bootstrap.read().map_err(|_| AppError {
-        code: "stateUnavailable".to_string(),
-        message: "Application state is unavailable.".to_string(),
-    })?;
+    let bootstrap = state
+        .bootstrap
+        .read()
+        .map_err(|_| AppError::new("stateUnavailable", "Application state is unavailable."))?;
 
     Ok(bootstrap.clone())
 }
@@ -53,6 +54,7 @@ pub fn run() {
             load_settings,
             save_settings,
             clear_api_key,
+            test_connection,
             clear_memory
         ])
         .run(tauri::generate_context!())
@@ -116,7 +118,8 @@ mod tests {
             serde_json::json!([
                 "allow-load-settings",
                 "allow-save-settings",
-                "allow-clear-api-key"
+                "allow-clear-api-key",
+                "allow-test-connection"
             ])
         );
     }

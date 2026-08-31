@@ -2,10 +2,12 @@ use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
+use tokio_util::sync::CancellationToken;
 
 use crate::{
     domain::{BootstrapState, PetStatus, WebMode},
     error::AppError,
+    llm::{LlmTransport, OpenAiClient},
     storage::{Database, PersistedSettings},
 };
 
@@ -108,8 +110,21 @@ impl SettingsService {
             .map_err(|_| credential_store_clear_error())
     }
 
-    pub async fn mark_connection_verified(&self) -> Result<(), AppError> {
+    pub async fn test_connection(&self) -> Result<(), AppError> {
         let _operation = self.operation.lock().await;
+        let persisted = self.database.load_settings()?;
+        let web_mode = parse_web_mode(&persisted)?;
+        let settings = ApiSettings {
+            api_base: persisted.api_base,
+            model: persisted.model,
+            web_mode,
+            always_on_top: persisted.always_on_top,
+            autostart: persisted.autostart,
+            api_configured: false,
+        };
+        let transport = OpenAiClient::from_shared(settings, Arc::clone(&self.credentials));
+
+        transport.test_connection(CancellationToken::new()).await?;
         self.database.set_first_run_complete()
     }
 
@@ -145,37 +160,34 @@ impl SettingsService {
 }
 
 fn parse_web_mode(settings: &PersistedSettings) -> Result<WebMode, AppError> {
-    WebMode::from_storage_value(&settings.web_mode).ok_or_else(|| AppError {
-        code: "invalidSettings".to_string(),
-        message: "Application settings are invalid.".to_string(),
-    })
+    WebMode::from_storage_value(&settings.web_mode)
+        .ok_or_else(|| AppError::new("invalidSettings", "Application settings are invalid."))
 }
 
 fn credential_store_access_error() -> AppError {
-    AppError {
-        code: "credentialStoreUnavailable".to_string(),
-        message: "The protected API credential could not be accessed.".to_string(),
-    }
+    AppError::new(
+        "credentialStoreUnavailable",
+        "The protected API credential could not be accessed.",
+    )
 }
 
 fn credential_store_write_error() -> AppError {
-    AppError {
-        code: "credentialStoreUnavailable".to_string(),
-        message: "The protected API credential could not be stored.".to_string(),
-    }
+    AppError::new(
+        "credentialStoreUnavailable",
+        "The protected API credential could not be stored.",
+    )
 }
 
 fn credential_store_clear_error() -> AppError {
-    AppError {
-        code: "credentialStoreUnavailable".to_string(),
-        message: "The protected API credential could not be cleared.".to_string(),
-    }
+    AppError::new(
+        "credentialStoreUnavailable",
+        "The protected API credential could not be cleared.",
+    )
 }
 
 fn settings_rollback_error() -> AppError {
-    AppError {
-        code: "settingsRollbackFailed".to_string(),
-        message: "Previous settings could not be restored after credential storage failed."
-            .to_string(),
-    }
+    AppError::new(
+        "settingsRollbackFailed",
+        "Previous settings could not be restored after credential storage failed.",
+    )
 }

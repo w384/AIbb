@@ -282,8 +282,8 @@ fn unix_milliseconds() -> Result<i64, AppError> {
 }
 
 fn memory_error() -> AppError {
-    AppError {
-        code: "storageUnavailable".to_string(),
-        message: "Conversation memory could not be accessed.".to_string(),
-    }
+    AppError::new(
+        "storageUnavailable",
+        "Conversation memory could not be accessed.",
+    )
 }

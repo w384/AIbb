@@ -54,10 +54,10 @@ impl CredentialStore for LeakyCredentialStore {
     }
 
     async fn set(&self, _api_key: &str) -> Result<(), AppError> {
-        Err(AppError {
-            code: "credentialFailure".into(),
-            message: "Authorization: Bearer sk-do-not-log\nkey=sk-do-not-log".into(),
-        })
+        Err(AppError::new(
+            "credentialFailure",
+            "Authorization: Bearer sk-do-not-log\nkey=sk-do-not-log",
+        ))
     }
 
     async fn clear(&self) -> Result<(), AppError> {
@@ -85,10 +85,10 @@ impl CredentialStore for FailingSetCredentialStore {
     }
 
     async fn set(&self, api_key: &str) -> Result<(), AppError> {
-        Err(AppError {
-            code: format!("credential-set-failed-{api_key}"),
-            message: format!("inline Authorization: Bearer {api_key}"),
-        })
+        Err(AppError::new(
+            format!("credential-set-failed-{api_key}"),
+            format!("inline Authorization: Bearer {api_key}"),
+        ))
     }
 
     async fn clear(&self) -> Result<(), AppError> {
@@ -127,10 +127,7 @@ impl CredentialStore for PausingCredentialStore {
             "key-a" => {
                 self.save_a_entered.notify_one();
                 self.release_save_a.notified().await;
-                Err(AppError {
-                    code: "saveAFailed".into(),
-                    message: "save A failed".into(),
-                })
+                Err(AppError::new("saveAFailed", "save A failed"))
             }
             "key-b" => {
                 self.save_b_entered.notify_one();
@@ -238,18 +235,6 @@ async fn omitted_key_preserves_the_credential_until_explicitly_cleared() {
 }
 
 #[tokio::test]
-async fn marks_first_run_complete_only_after_connection_verification() {
-    let db = TestDatabase::new();
-    let service = SettingsService::new(db.handle(), FakeCredentialStore::default());
-
-    assert!(!db.handle().load_settings().unwrap().first_run_complete);
-
-    service.mark_connection_verified().await.unwrap();
-
-    assert!(db.handle().load_settings().unwrap().first_run_complete);
-}
-
-#[tokio::test]
 async fn rebuilds_bootstrap_state_from_persisted_completion_and_protected_credential() {
     let db = TestDatabase::new();
     let vault = FakeCredentialStore::default();
@@ -265,7 +250,7 @@ async fn rebuilds_bootstrap_state_from_persisted_completion_and_protected_creden
     );
 
     vault.set("protected-after-restart").await.unwrap();
-    service.mark_connection_verified().await.unwrap();
+    db.handle().set_first_run_complete().unwrap();
     let restarted = SettingsService::new(db.reopen(), vault);
 
     assert_eq!(

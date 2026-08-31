@@ -21,3 +21,8 @@ pub async fn save_settings(
 pub async fn clear_api_key(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     state.settings.clear_api_key().await
 }
+
+#[tauri::command]
+pub async fn test_connection(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+    state.settings.test_connection().await
+}

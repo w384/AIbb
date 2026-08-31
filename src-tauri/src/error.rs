@@ -1,36 +1,126 @@
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ErrorCode {
+    AuthenticationFailed,
+    ModelNotFound,
+    RateLimited,
+    RequestTimeout,
+    Cancelled,
+    ProviderUnavailable,
+    InvalidRequest,
+    InvalidResponse,
+}
+
+impl ErrorCode {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::AuthenticationFailed => "authentication_failed",
+            Self::ModelNotFound => "model_not_found",
+            Self::RateLimited => "rate_limited",
+            Self::RequestTimeout => "request_timeout",
+            Self::Cancelled => "cancelled",
+            Self::ProviderUnavailable => "provider_unavailable",
+            Self::InvalidRequest => "invalid_request",
+            Self::InvalidResponse => "invalid_response",
+        }
+    }
+
+    const fn public_message(self) -> &'static str {
+        match self {
+            Self::AuthenticationFailed => "The model provider rejected the API credential.",
+            Self::ModelNotFound => "The configured model was not found.",
+            Self::RateLimited => "The model provider rate limit was reached.",
+            Self::RequestTimeout => "The model request timed out.",
+            Self::Cancelled => "The model request was cancelled.",
+            Self::ProviderUnavailable => "The model provider is unavailable.",
+            Self::InvalidRequest => "The model provider rejected the request.",
+            Self::InvalidResponse => "The model provider returned an invalid response.",
+        }
+    }
+}
+
 #[derive(Debug, serde::Serialize, thiserror::Error)]
 #[serde(rename_all = "camelCase")]
 #[error("{message}")]
 pub struct AppError {
     pub code: String,
     pub message: String,
+    #[serde(skip)]
+    diagnostic: Option<String>,
 }
 
 impl AppError {
+    pub fn new(code: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            code: code.into(),
+            message: message.into(),
+            diagnostic: None,
+        }
+    }
+
+    pub fn from_code(code: ErrorCode) -> Self {
+        Self::new(code.as_str(), code.public_message())
+    }
+
+    pub fn from_http_body(
+        status: u16,
+        body: &str,
+        current_key: Option<&str>,
+        chat_or_model_endpoint: bool,
+    ) -> Self {
+        let code = match status {
+            401 | 403 => ErrorCode::AuthenticationFailed,
+            404 if chat_or_model_endpoint => ErrorCode::ModelNotFound,
+            429 => ErrorCode::RateLimited,
+            500..=599 => ErrorCode::ProviderUnavailable,
+            _ => ErrorCode::InvalidRequest,
+        };
+        let redacted_body = redact_secret(body, current_key);
+
+        Self {
+            code: code.as_str().to_owned(),
+            message: code.public_message().to_owned(),
+            diagnostic: Some(format!("provider HTTP {status}: {redacted_body}")),
+        }
+    }
+
+    pub fn with_diagnostic(
+        mut self,
+        diagnostic: impl AsRef<str>,
+        current_key: Option<&str>,
+    ) -> Self {
+        self.diagnostic = Some(redact_secret(diagnostic.as_ref(), current_key));
+        self
+    }
+
+    pub fn diagnostic(&self) -> Option<&str> {
+        self.diagnostic.as_deref()
+    }
+
     pub fn sanitized(
         code: impl Into<String>,
         message: impl AsRef<str>,
         current_key: Option<&str>,
     ) -> Self {
         let code = code.into();
-        let mut safe_code = redact_authorization_values(&code);
-        let mut safe_message = message
-            .as_ref()
-            .lines()
-            .map(redact_authorization_values)
-            .collect::<Vec<_>>()
-            .join("\n");
-
-        if let Some(api_key) = current_key.filter(|key| !key.is_empty()) {
-            safe_code = safe_code.replace(api_key, "[REDACTED]");
-            safe_message = safe_message.replace(api_key, "[REDACTED]");
-        }
-
-        Self {
-            code: safe_code,
-            message: safe_message,
-        }
+        Self::new(
+            redact_secret(&code, current_key),
+            redact_secret(message.as_ref(), current_key),
+        )
     }
+}
+
+fn redact_secret(value: &str, current_key: Option<&str>) -> String {
+    let mut safe = value
+        .lines()
+        .map(redact_authorization_values)
+        .collect::<Vec<_>>()
+        .join("\n");
+
+    if let Some(api_key) = current_key.filter(|key| !key.is_empty()) {
+        safe = safe.replace(api_key, "[REDACTED]");
+    }
+
+    safe
 }
 
 fn redact_authorization_values(value: &str) -> String {

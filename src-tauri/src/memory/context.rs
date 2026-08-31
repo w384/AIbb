@@ -78,8 +78,8 @@ pub fn last_non_empty_paragraph(content: &str) -> Option<String> {
 }
 
 fn context_error() -> AppError {
-    AppError {
-        code: "invalidMemoryContext".to_string(),
-        message: "Conversation context could not be built.".to_string(),
-    }
+    AppError::new(
+        "invalidMemoryContext",
+        "Conversation context could not be built.",
+    )
 }

@@ -198,10 +198,10 @@ fn get_or_create_window(
 }
 
 fn window_error(action: &str, error: tauri::Error) -> AppError {
-    AppError {
-        code: "windowOperationFailed".to_string(),
-        message: format!("Failed to {action}: {error}"),
-    }
+    AppError::new(
+        "windowOperationFailed",
+        format!("Failed to {action}: {error}"),
+    )
 }
 
 #[cfg(test)]

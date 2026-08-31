@@ -46,8 +46,8 @@ impl CredentialStore for NativeCredentialStore {
 }
 
 fn credential_error() -> AppError {
-    AppError {
-        code: "credentialStoreUnavailable".to_string(),
-        message: "The protected API credential could not be accessed.".to_string(),
-    }
+    AppError::new(
+        "credentialStoreUnavailable",
+        "The protected API credential could not be accessed.",
+    )
 }

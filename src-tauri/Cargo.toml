@@ -27,6 +27,12 @@ rusqlite_migration = "2.6.0"
 keyring = "4.2.0"
 async-trait = "0.1.92"
 tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls"] }
+tokio-util = "0.7.19"
+futures-util = "0.3.34"
+url = "2.5.8"
+uuid = { version = "1.26.0", features = ["v4", "serde"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"
+wiremock = "0.6.5"
