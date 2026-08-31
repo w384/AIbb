@@ -1,0 +1,246 @@
+use std::{collections::HashSet, time::Duration};
+
+use async_trait::async_trait;
+use futures_util::StreamExt;
+use scraper::{Html, Selector};
+use tokio::time::timeout;
+use tokio_util::sync::CancellationToken;
+use url::Url;
+
+use crate::error::{AppError, ErrorCode};
+
+use super::validate_url;
+
+const SEARCH_ENDPOINT: &str = "https://html.duckduckgo.com/html/";
+const USER_AGENT: &str = "AIbb/0.1 public-read-only";
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(12);
+const MAX_SEARCH_RESPONSE_BYTES: usize = 2_000_000;
+
+#[async_trait]
+pub trait SearchProvider: Send + Sync {
+    async fn search(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError>;
+}
+
+pub struct DuckDuckGoHtmlSearch {
+    http: reqwest::Client,
+    endpoint: Url,
+    cancellation: CancellationToken,
+}
+
+impl DuckDuckGoHtmlSearch {
+    pub fn new(cancellation: CancellationToken) -> Result<Self, AppError> {
+        let http = build_search_client(reqwest::Client::builder())?;
+        Self::with_endpoint(http, SEARCH_ENDPOINT.to_owned(), cancellation)
+    }
+
+    #[doc(hidden)]
+    pub fn with_endpoint(
+        http: reqwest::Client,
+        endpoint: String,
+        cancellation: CancellationToken,
+    ) -> Result<Self, AppError> {
+        let endpoint = Url::parse(&endpoint).map_err(|_| search_error("invalid endpoint"))?;
+        Ok(Self {
+            http,
+            endpoint,
+            cancellation,
+        })
+    }
+
+    async fn search_inner(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+        let mut url = self.endpoint.clone();
+        url.query_pairs_mut().clear().append_pair("q", query);
+        let response = tokio::select! {
+            _ = self.cancellation.cancelled() => {
+                return Err(AppError::from_code(ErrorCode::Cancelled));
+            }
+            response = self.http.get(url).header(reqwest::header::USER_AGENT, USER_AGENT).send() => {
+                response.map_err(search_error)?
+            }
+        };
+        if !response.status().is_success() {
+            return Err(search_error("search status changed"));
+        }
+        let mut stream = response.bytes_stream();
+        let mut body = Vec::new();
+        loop {
+            let chunk = tokio::select! {
+                _ = self.cancellation.cancelled() => {
+                    return Err(AppError::from_code(ErrorCode::Cancelled));
+                }
+                chunk = stream.next() => chunk,
+            };
+            let Some(chunk) = chunk else {
+                break;
+            };
+            let chunk = chunk.map_err(search_error)?;
+            if body
+                .len()
+                .checked_add(chunk.len())
+                .is_none_or(|size| size > MAX_SEARCH_RESPONSE_BYTES)
+            {
+                return Err(search_error("search response too large"));
+            }
+            body.extend_from_slice(&chunk);
+        }
+        let body = String::from_utf8(body).map_err(search_error)?;
+
+        parse_result_links(&body, limit)
+    }
+}
+
+fn build_search_client(builder: reqwest::ClientBuilder) -> Result<reqwest::Client, AppError> {
+    builder
+        .redirect(reqwest::redirect::Policy::none())
+        .no_proxy()
+        .build()
+        .map_err(search_error)
+}
+
+#[async_trait]
+impl SearchProvider for DuckDuckGoHtmlSearch {
+    async fn search(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError> {
+        tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => {
+                Err(AppError::from_code(ErrorCode::Cancelled))
+            }
+            result = timeout(SEARCH_TIMEOUT, self.search_inner(query, limit)) => {
+                result.unwrap_or_else(|_| Err(search_error("search timeout")))
+            }
+        }
+    }
+}
+
+fn parse_result_links(body: &str, limit: usize) -> Result<Vec<String>, AppError> {
+    let document = Html::parse_document(body);
+    let selector =
+        Selector::parse("a.result__a[href]").expect("static search selector must be valid");
+    let mut seen = HashSet::new();
+    let mut results = Vec::new();
+
+    for element in document.select(&selector) {
+        let Some(href) = element.value().attr("href") else {
+            continue;
+        };
+        let Some(url) = result_url(href) else {
+            continue;
+        };
+        let normalized = url.as_str().to_owned();
+        if seen.insert(normalized.clone()) {
+            results.push(normalized);
+            if results.len() == limit {
+                break;
+            }
+        }
+    }
+
+    if results.is_empty() {
+        Err(search_error("search markup changed"))
+    } else {
+        Ok(results)
+    }
+}
+
+fn result_url(href: &str) -> Option<Url> {
+    let candidate = if href.starts_with("//") {
+        Url::parse(&format!("https:{href}")).ok()?
+    } else if href.starts_with('/') {
+        Url::parse(SEARCH_ENDPOINT).ok()?.join(href).ok()?
+    } else {
+        Url::parse(href).ok()?
+    };
+    let host = candidate.host_str().unwrap_or_default();
+    let is_duckduckgo = host.eq_ignore_ascii_case("duckduckgo.com")
+        || host.to_ascii_lowercase().ends_with(".duckduckgo.com");
+    let target = if is_duckduckgo && candidate.path() == "/l/" {
+        let encoded = candidate.query_pairs().find(|(name, _)| name == "uddg")?.1;
+        Url::parse(encoded.as_ref()).ok()?
+    } else {
+        candidate
+    };
+    let mut target = validate_url(target.as_str()).ok()?;
+    target.set_fragment(None);
+    Some(target)
+}
+
+fn search_error(error: impl std::fmt::Display) -> AppError {
+    AppError::from_code(ErrorCode::PublicSearchUnavailable).with_diagnostic(error.to_string(), None)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{net::SocketAddr, time::Duration};
+
+    use tokio::{
+        io::{AsyncReadExt, AsyncWriteExt},
+        net::TcpListener,
+        time::timeout,
+    };
+
+    use super::build_search_client;
+
+    async fn serve_once(listener: TcpListener, body: &'static str) {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 1024];
+        loop {
+            let read = socket.read(&mut buffer).await.unwrap();
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket.write_all(response.as_bytes()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn production_search_client_clears_configured_proxies() {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let origin_address = origin.local_addr().unwrap();
+        let proxy = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let proxy_address = proxy.local_addr().unwrap();
+        let mut origin_task = tokio::spawn(serve_once(origin, "origin"));
+        let mut proxy_task = tokio::spawn(serve_once(proxy, "proxy"));
+        let pinned_origin = SocketAddr::new(origin_address.ip(), origin_address.port());
+        let client = build_search_client(
+            reqwest::Client::builder()
+                .proxy(reqwest::Proxy::all(format!("http://{proxy_address}")).unwrap())
+                .resolve_to_addrs("direct.invalid", &[pinned_origin]),
+        )
+        .unwrap();
+
+        let body = client
+            .get(format!("http://direct.invalid:{}/", origin_address.port()))
+            .send()
+            .await
+            .unwrap()
+            .text()
+            .await
+            .unwrap();
+        let origin_result = timeout(Duration::from_millis(100), &mut origin_task).await;
+        let proxy_result = timeout(Duration::from_millis(100), &mut proxy_task).await;
+        origin_task.abort();
+        proxy_task.abort();
+
+        assert_eq!(body, "origin");
+        assert!(
+            origin_result.is_ok(),
+            "origin must receive the direct request"
+        );
+        assert!(
+            proxy_result.is_err(),
+            "configured proxy must receive no request"
+        );
+    }
+}

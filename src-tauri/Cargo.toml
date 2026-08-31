@@ -26,12 +26,15 @@ rusqlite = { version = "0.40.2", features = ["bundled"] }
 rusqlite_migration = "2.6.0"
 keyring = "4.2.0"
 async-trait = "0.1.92"
-tokio = { version = "1.53.1", features = ["macros", "rt-multi-thread", "sync", "time"] }
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
 reqwest = { version = "0.13.4", default-features = false, features = ["json", "stream", "rustls"] }
 tokio-util = "0.7.19"
 futures-util = "0.3.34"
 url = "2.5.8"
 uuid = { version = "1.26.0", features = ["v4", "serde"] }
+scraper = "0.24.0"
+ipnet = "2.11.0"
+encoding_rs = "0.8.35"
 
 [dev-dependencies]
 tempfile = "3.27.0"

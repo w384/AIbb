@@ -8,6 +8,13 @@ pub enum ErrorCode {
     ProviderUnavailable,
     InvalidRequest,
     InvalidResponse,
+    UnsafeUrl,
+    UnsupportedContent,
+    ResponseTooLarge,
+    PublicSearchUnavailable,
+    PublicPageUnavailable,
+    RedirectLimitExceeded,
+    PageBudgetExceeded,
 }
 
 impl ErrorCode {
@@ -21,6 +28,13 @@ impl ErrorCode {
             Self::ProviderUnavailable => "provider_unavailable",
             Self::InvalidRequest => "invalid_request",
             Self::InvalidResponse => "invalid_response",
+            Self::UnsafeUrl => "unsafe_url",
+            Self::UnsupportedContent => "unsupported_content",
+            Self::ResponseTooLarge => "response_too_large",
+            Self::PublicSearchUnavailable => "public_search_unavailable",
+            Self::PublicPageUnavailable => "public_page_unavailable",
+            Self::RedirectLimitExceeded => "redirect_limit_exceeded",
+            Self::PageBudgetExceeded => "page_budget_exceeded",
         }
     }
 
@@ -34,6 +48,13 @@ impl ErrorCode {
             Self::ProviderUnavailable => "The model provider is unavailable.",
             Self::InvalidRequest => "The model provider rejected the request.",
             Self::InvalidResponse => "The model provider returned an invalid response.",
+            Self::UnsafeUrl => "The public page address is not safe to access.",
+            Self::UnsupportedContent => "The public page content type is not supported.",
+            Self::ResponseTooLarge => "The public page response is too large.",
+            Self::PublicSearchUnavailable => "Public search is temporarily unavailable.",
+            Self::PublicPageUnavailable => "The public page is temporarily unavailable.",
+            Self::RedirectLimitExceeded => "The public page redirected too many times.",
+            Self::PageBudgetExceeded => "The public page exploration limit was reached.",
         }
     }
 }

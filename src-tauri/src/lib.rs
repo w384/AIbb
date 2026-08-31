@@ -9,6 +9,7 @@ pub mod platform;
 pub mod prompts;
 pub mod settings;
 pub mod storage;
+pub mod web;
 
 use app_state::AppState;
 use commands::memory::clear_memory;
