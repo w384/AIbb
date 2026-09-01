@@ -44,16 +44,8 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     if matches!(input, "去玩" | "出去玩") {
         return UserInputIntent::Explore { direction: None };
     }
-
-    if let Some(direction) = input
-        .strip_prefix('去')
-        .and_then(|value| value.strip_suffix("方向玩"))
-        .map(str::trim)
-        .filter(|value| is_safe_direction(value))
-    {
-        return UserInputIntent::Explore {
-            direction: Some(direction.to_string()),
-        };
+    if input.starts_with("去年") {
+        return UserInputIntent::Chat;
     }
 
     if let Some(direction) = input
@@ -71,8 +63,8 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
         .strip_prefix('去')
         .and_then(|value| value.strip_suffix('玩'))
         .filter(|value| *value == value.trim())
-        .filter(|value| value.chars().count() <= 4)
         .filter(|value| is_safe_direction(value))
+        .filter(|value| !is_obvious_statement(value))
     {
         return UserInputIntent::Explore {
             direction: Some(direction.to_string()),
@@ -80,6 +72,10 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     }
 
     UserInputIntent::Chat
+}
+
+fn is_obvious_statement(direction: &str) -> bool {
+    direction.ends_with("很好") || direction.ends_with("真好")
 }
 
 fn is_safe_direction(direction: &str) -> bool {
