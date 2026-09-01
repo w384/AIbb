@@ -1,5 +1,6 @@
 use std::sync::RwLock;
 
+use crate::commands::chat::ChatService;
 use crate::domain::BootstrapState;
 use crate::exploration::ExplorationOrchestrator;
 use crate::memory::MemoryRepository;
@@ -9,6 +10,7 @@ pub struct AppState {
     pub bootstrap: RwLock<BootstrapState>,
     pub settings: SettingsService,
     pub memory: MemoryRepository,
+    pub chat: Option<ChatService>,
     pub exploration: Option<ExplorationOrchestrator>,
 }
 
@@ -22,6 +24,7 @@ impl AppState {
             bootstrap: RwLock::new(bootstrap),
             settings,
             memory,
+            chat: None,
             exploration: None,
         }
     }
@@ -34,6 +37,18 @@ impl AppState {
     ) -> Self {
         let mut state = Self::new(bootstrap, settings, memory);
         state.exploration = Some(exploration);
+        state
+    }
+
+    pub fn with_services(
+        bootstrap: BootstrapState,
+        settings: SettingsService,
+        memory: MemoryRepository,
+        chat: ChatService,
+        exploration: ExplorationOrchestrator,
+    ) -> Self {
+        let mut state = Self::with_exploration(bootstrap, settings, memory, exploration);
+        state.chat = Some(chat);
         state
     }
 }

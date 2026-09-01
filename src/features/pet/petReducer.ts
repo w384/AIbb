@@ -1,5 +1,38 @@
 const DRAG_THRESHOLD = 4;
 
+export interface PetState {
+  status: "idle" | "chatting" | "exploring" | "returned" | "error";
+  taskId: string | null;
+}
+
+export type PetEvent =
+  | { type: "CHAT_OPENED" }
+  | { type: "EXPLORATION_STARTED"; taskId: string }
+  | { type: "EXPLORATION_COMPLETED"; taskId: string }
+  | { type: "EXPLORATION_FAILED"; taskId: string }
+  | { type: "RESET_TO_IDLE" };
+
+export const initialPetState: PetState = { status: "idle", taskId: null };
+
+export function petStatusReducer(state: PetState, event: PetEvent): PetState {
+  switch (event.type) {
+    case "CHAT_OPENED":
+      return { status: "chatting", taskId: null };
+    case "EXPLORATION_STARTED":
+      return { status: "exploring", taskId: event.taskId };
+    case "EXPLORATION_COMPLETED":
+      return state.taskId === event.taskId
+        ? { status: "returned", taskId: event.taskId }
+        : state;
+    case "EXPLORATION_FAILED":
+      return state.taskId === event.taskId
+        ? { status: "error", taskId: event.taskId }
+        : state;
+    case "RESET_TO_IDLE":
+      return initialPetState;
+  }
+}
+
 export interface PetGestureState {
   pointerId: number | null;
   origin: { x: number; y: number } | null;

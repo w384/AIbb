@@ -1,0 +1,15 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "chat",
+  "description": "Minimal chat-window access to scoped events and user actions",
+  "windows": ["chat"],
+  "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
+    "allow-get-bootstrap-state",
+    "allow-open-settings-window",
+    "allow-submit-user-input",
+    "allow-start-exploration",
+    "allow-cancel-exploration"
+  ]
+}

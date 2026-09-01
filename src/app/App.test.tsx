@@ -1,13 +1,24 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { App } from "./App";
 
-describe("App", () => {
-  it("shows the deterministic local first-run greeting", () => {
-    render(<App />);
+vi.mock("../features/pet/PetSurface", () => ({
+  PetSurface: () => <main aria-label="pet-route">pet</main>,
+}));
+vi.mock("../features/chat/ChatPanel", () => ({
+  ChatPanel: () => <main aria-label="chat-route">chat</main>,
+}));
+vi.mock("../features/settings/SettingsPanel", () => ({
+  SettingsPanel: () => <main aria-label="settings-route">settings</main>,
+}));
 
-    expect(screen.getByRole("main", { name: "AIbb" })).toHaveTextContent(
-      "你好！我是喜欢出去玩耍的快乐 AIbb。右键点击我，先配置一个大模型 API 吧。",
-    );
+describe("App routing", () => {
+  it.each([
+    ["pet", "pet-route"],
+    ["chat", "chat-route"],
+    ["settings", "settings-route"],
+  ])("routes the %s window label", (windowLabel, accessibleName) => {
+    render(<App windowLabel={windowLabel} />);
+    expect(screen.getByRole("main", { name: accessibleName })).toBeVisible();
   });
 });

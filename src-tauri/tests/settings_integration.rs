@@ -2,6 +2,7 @@ use std::{fs, path::PathBuf, sync::Arc};
 
 use aibb_desktop_pet_lib::{
     app_state::AppState,
+    current_bootstrap_state,
     domain::{BootstrapState, PetStatus, WebMode},
     error::AppError,
     memory::MemoryRepository,
@@ -235,6 +236,32 @@ async fn omitted_key_preserves_the_credential_until_explicitly_cleared() {
 }
 
 #[tokio::test]
+async fn blank_replacement_key_preserves_the_existing_protected_credential() {
+    let db = TestDatabase::new();
+    let vault = FakeCredentialStore::default();
+    vault.set("existing-secret").await.unwrap();
+    let service = SettingsService::new(db.handle(), vault.clone());
+
+    service
+        .save(SaveSettings {
+            api_base: "https://example.test/v1".into(),
+            model: "model-b".into(),
+            api_key: Some("   ".into()),
+            web_mode: WebMode::Auto,
+            always_on_top: true,
+            autostart: false,
+        })
+        .await
+        .unwrap();
+
+    assert_eq!(
+        vault.get().await.unwrap().as_deref(),
+        Some("existing-secret")
+    );
+    assert!(service.load().await.unwrap().api_configured);
+}
+
+#[tokio::test]
 async fn rebuilds_bootstrap_state_from_persisted_completion_and_protected_credential() {
     let db = TestDatabase::new();
     let vault = FakeCredentialStore::default();
@@ -260,6 +287,31 @@ async fn rebuilds_bootstrap_state_from_persisted_completion_and_protected_creden
             pet_status: PetStatus::Idle,
             api_configured: true,
         }
+    );
+}
+
+#[tokio::test]
+async fn renderer_bootstrap_refreshes_after_the_protected_key_changes() {
+    let db = TestDatabase::new();
+    let vault = FakeCredentialStore::default();
+    let service = SettingsService::new(db.handle(), vault.clone());
+    let state = AppState::new(
+        BootstrapState {
+            first_run: true,
+            pet_status: PetStatus::Idle,
+            api_configured: false,
+        },
+        service,
+        MemoryRepository::new(db.handle()),
+    );
+
+    vault.set("newly-configured-key").await.unwrap();
+
+    assert!(
+        current_bootstrap_state(&state)
+            .await
+            .unwrap()
+            .api_configured
     );
 }
 

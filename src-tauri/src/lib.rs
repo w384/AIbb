@@ -12,6 +12,7 @@ pub mod storage;
 pub mod web;
 
 use app_state::AppState;
+use commands::chat::{build_chat_service, start_chat, submit_user_input};
 use commands::exploration::{
     build_exploration_orchestrator, cancel_exploration, start_exploration,
 };
@@ -27,13 +28,14 @@ use settings::{NativeCredentialStore, SettingsService};
 use storage::Database;
 
 #[tauri::command]
-fn get_bootstrap_state(state: tauri::State<'_, AppState>) -> Result<BootstrapState, AppError> {
-    let bootstrap = state
-        .bootstrap
-        .read()
-        .map_err(|_| AppError::new("stateUnavailable", "Application state is unavailable."))?;
+async fn get_bootstrap_state(
+    state: tauri::State<'_, AppState>,
+) -> Result<BootstrapState, AppError> {
+    current_bootstrap_state(&state).await
+}
 
-    Ok(bootstrap.clone())
+pub async fn current_bootstrap_state(state: &AppState) -> Result<BootstrapState, AppError> {
+    state.settings.load_bootstrap_state().await
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -63,11 +65,13 @@ pub fn run() {
                 memory.clone(),
                 settings.clone(),
             );
+            let chat = build_chat_service(app.handle().clone(), memory.clone(), settings.clone());
             tauri::async_runtime::block_on(exploration.recover_interrupted())?;
-            app.manage(AppState::with_exploration(
+            app.manage(AppState::with_services(
                 bootstrap,
                 settings.clone(),
                 memory,
+                chat,
                 exploration,
             ));
             platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
@@ -85,7 +89,9 @@ pub fn run() {
             test_connection,
             clear_memory,
             start_exploration,
-            cancel_exploration
+            cancel_exploration,
+            start_chat,
+            submit_user_input
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -94,6 +100,9 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
+
+    use crate::exploration::{ExplorationEvent, ExplorationStatus};
+    use uuid::Uuid;
 
     #[test]
     fn single_instance_plugin_precedes_setup_and_interrupted_task_recovery() {
@@ -127,6 +136,8 @@ mod tests {
         assert_eq!(
             capability["permissions"],
             serde_json::json!([
+                "core:event:allow-listen",
+                "core:event:allow-unlisten",
                 "core:window:allow-outer-position",
                 "allow-toggle-chat-window",
                 "allow-open-settings-window",
@@ -137,23 +148,27 @@ mod tests {
     }
 
     #[test]
-    fn chat_receives_no_capabilities() {
-        let capability_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+    fn chat_capability_grants_only_chat_events_and_required_commands() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("capabilities")
+            .join("chat.json");
+        assert!(path.exists(), "chat capability must exist");
+        let capability: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
 
-        for entry in fs::read_dir(capability_directory).unwrap() {
-            let path = entry.unwrap().path();
-            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
-                continue;
-            }
-            let capability: serde_json::Value =
-                serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-            let windows = capability["windows"].as_array().unwrap();
-
-            assert!(
-                !windows.iter().any(|window| window == "chat"),
-                "chat must not receive a capability"
-            );
-        }
+        assert_eq!(capability["windows"], serde_json::json!(["chat"]));
+        assert_eq!(
+            capability["permissions"],
+            serde_json::json!([
+                "core:event:allow-listen",
+                "core:event:allow-unlisten",
+                "allow-get-bootstrap-state",
+                "allow-open-settings-window",
+                "allow-submit-user-input",
+                "allow-start-exploration",
+                "allow-cancel-exploration"
+            ])
+        );
     }
 
     #[test]
@@ -171,9 +186,45 @@ mod tests {
             serde_json::json!([
                 "allow-load-settings",
                 "allow-save-settings",
-                "allow-clear-api-key",
-                "allow-test-connection"
+                "allow-test-connection",
+                "allow-clear-memory"
             ])
         );
+    }
+
+    #[test]
+    fn lower_level_chat_and_unrelated_window_commands_are_never_granted() {
+        let capability_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
+        let forbidden = [
+            "allow-start-chat",
+            "allow-load-settings",
+            "allow-save-settings",
+            "allow-start-pet-drag",
+            "allow-save-pet-position",
+        ];
+        let chat: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(capability_directory.join("chat.json")).unwrap(),
+        )
+        .unwrap();
+        let permissions = chat["permissions"].as_array().unwrap();
+        for permission in forbidden {
+            assert!(
+                !permissions.iter().any(|value| value == permission),
+                "chat must not receive {permission}"
+            );
+        }
+    }
+
+    #[test]
+    fn exploration_events_serialize_task_id_for_renderer_filters() {
+        let task_id = Uuid::nil();
+        let serialized = serde_json::to_value(ExplorationEvent::Progress {
+            task_id,
+            status: ExplorationStatus::Writing,
+        })
+        .unwrap();
+
+        assert_eq!(serialized["taskId"], serde_json::json!(task_id));
+        assert!(serialized.get("task_id").is_none());
     }
 }

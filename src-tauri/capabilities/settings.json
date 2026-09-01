@@ -6,7 +6,7 @@
   "permissions": [
     "allow-load-settings",
     "allow-save-settings",
-    "allow-clear-api-key",
-    "allow-test-connection"
+    "allow-test-connection",
+    "allow-clear-memory"
   ]
 }

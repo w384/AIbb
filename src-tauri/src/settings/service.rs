@@ -88,7 +88,8 @@ impl SettingsService {
             .credentials
             .get()
             .await
-            .map_err(|_| credential_store_access_error())?;
+            .map_err(|_| credential_store_access_error())?
+            .and_then(normalize_replacement_key);
 
         Ok(ExplorationTaskSnapshot {
             settings: ApiSettings {
@@ -105,6 +106,7 @@ impl SettingsService {
 
     pub async fn save(&self, settings: SaveSettings) -> Result<(), AppError> {
         let _operation = self.operation.lock().await;
+        let replacement_key = settings.api_key.and_then(normalize_replacement_key);
         let previous = self.database.load_settings()?;
         self.database.save_settings(
             &settings.api_base,
@@ -114,7 +116,7 @@ impl SettingsService {
             settings.autostart,
         )?;
 
-        if let Some(api_key) = settings.api_key {
+        if let Some(api_key) = replacement_key {
             if self.credentials.set(&api_key).await.is_err() {
                 if self
                     .database
@@ -188,9 +190,14 @@ impl SettingsService {
             .get()
             .await
             .map_err(|_| credential_store_access_error())?
-            .is_some();
+            .is_some_and(|key| !key.trim().is_empty());
         Ok((persisted, api_configured))
     }
+}
+
+fn normalize_replacement_key(api_key: String) -> Option<String> {
+    let api_key = api_key.trim();
+    (!api_key.is_empty()).then(|| api_key.to_string())
 }
 
 fn parse_web_mode(settings: &PersistedSettings) -> Result<WebMode, AppError> {

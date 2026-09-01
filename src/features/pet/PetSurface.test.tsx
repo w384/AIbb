@@ -1,16 +1,42 @@
-import { fireEvent, render, within } from "@testing-library/react";
+import { act, fireEvent, render, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { PetSurface } from "./PetSurface";
 import {
   openSettingsWindow,
   startPetDrag,
   toggleChatWindow,
+  listenExplorationComplete,
+  listenExplorationError,
+  listenExplorationProgress,
 } from "../../lib/tauri";
+import type {
+  ExplorationCompleteEvent,
+  ExplorationErrorEvent,
+  ExplorationProgressEvent,
+} from "../../contracts";
+
+type Listener<T> = (payload: T) => void;
+let progressListener: Listener<ExplorationProgressEvent>;
+let completeListener: Listener<ExplorationCompleteEvent>;
+let errorListener: Listener<ExplorationErrorEvent>;
+const petUnlisteners = [vi.fn(), vi.fn(), vi.fn()];
 
 vi.mock("../../lib/tauri", () => ({
   openSettingsWindow: vi.fn(),
   startPetDrag: vi.fn(),
   toggleChatWindow: vi.fn(),
+  listenExplorationProgress: vi.fn(async (listener: Listener<ExplorationProgressEvent>) => {
+    progressListener = listener;
+    return petUnlisteners[0];
+  }),
+  listenExplorationComplete: vi.fn(async (listener: Listener<ExplorationCompleteEvent>) => {
+    completeListener = listener;
+    return petUnlisteners[1];
+  }),
+  listenExplorationError: vi.fn(async (listener: Listener<ExplorationErrorEvent>) => {
+    errorListener = listener;
+    return petUnlisteners[2];
+  }),
 }));
 
 const mockOpenSettings = vi.mocked(openSettingsWindow);
@@ -32,6 +58,63 @@ describe("PetSurface", () => {
     expect(fireEvent.contextMenu(pet)).toBe(false);
     expect(mockOpenSettings).toHaveBeenCalledTimes(1);
     expect(mockToggleChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a short return bubble for a completed exploration", () => {
+    const view = render(<PetSurface status="returned" />);
+
+    expect(within(view.container).getByRole("status")).toHaveTextContent(
+      "我回来啦，点我看结果",
+    );
+  });
+
+  it("tracks real exploration events and resets returned only after chat opens", async () => {
+    const view = render(<PetSurface status="idle" />);
+    await waitFor(() => expect(listenExplorationProgress).toHaveBeenCalled());
+
+    act(() => progressListener({ taskId: "task-1", status: "reading" }));
+    expect(view.container.firstChild).toHaveAttribute("data-status", "exploring");
+    act(() =>
+      errorListener({ taskId: "other", code: "cancelled", message: "safe" }),
+    );
+    expect(view.container.firstChild).toHaveAttribute("data-status", "exploring");
+    act(() =>
+      completeListener({
+        taskId: "other",
+        result: {
+          items: ["甲", "乙", "丙", "丁"],
+          nextOutingRequest: "再去玩",
+          rawResponse: "safe",
+        },
+      }),
+    );
+    expect(view.container.firstChild).toHaveAttribute("data-status", "exploring");
+    act(() =>
+      completeListener({
+        taskId: "task-1",
+        result: {
+          items: ["甲", "乙", "丙", "丁"],
+          nextOutingRequest: "再去玩",
+          rawResponse: "safe",
+        },
+      }),
+    );
+    expect(view.container.firstChild).toHaveAttribute("data-status", "returned");
+
+    fireEvent.click(within(view.container).getByRole("button", { name: "AIbb" }));
+    await waitFor(() =>
+      expect(view.container.firstChild).toHaveAttribute("data-status", "idle"),
+    );
+    expect(mockToggleChat).toHaveBeenCalledTimes(1);
+
+    act(() => errorListener({ taskId: "task-1", code: "failed", message: "safe" }));
+    expect(view.container.firstChild).toHaveAttribute("data-status", "idle");
+    view.unmount();
+    await waitFor(() =>
+      petUnlisteners.forEach((unlisten) => expect(unlisten).toHaveBeenCalled()),
+    );
+    expect(listenExplorationComplete).toHaveBeenCalled();
+    expect(listenExplorationError).toHaveBeenCalled();
   });
 
   it("starts dragging after movement exceeds four pixels and suppresses chat", () => {

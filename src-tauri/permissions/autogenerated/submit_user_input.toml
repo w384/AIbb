@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-submit-user-input"
+description = "Enables the submit_user_input command without any pre-configured scope."
+commands.allow = ["submit_user_input"]
+
+[[permission]]
+identifier = "deny-submit-user-input"
+description = "Denies the submit_user_input command without any pre-configured scope."
+commands.deny = ["submit_user_input"]

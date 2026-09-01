@@ -366,14 +366,17 @@ impl PublicWebFactory for DefaultPublicWebFactory {
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum ExplorationEvent {
     Progress {
+        #[serde(rename = "taskId")]
         task_id: Uuid,
         status: ExplorationStatus,
     },
     Complete {
+        #[serde(rename = "taskId")]
         task_id: Uuid,
         result: ExplorationResult,
     },
     Error {
+        #[serde(rename = "taskId")]
         task_id: Uuid,
         code: String,
         message: String,

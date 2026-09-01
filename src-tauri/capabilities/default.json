@@ -4,6 +4,8 @@
   "description": "Minimal renderer capabilities for the AIbb pet window",
   "windows": ["pet"],
   "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "core:window:allow-outer-position",
     "allow-toggle-chat-window",
     "allow-open-settings-window",

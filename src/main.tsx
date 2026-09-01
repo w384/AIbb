@@ -1,14 +1,14 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { App } from "./app/App";
-import { PetSurface } from "./features/pet/PetSurface";
 import "./App.css";
 
-const route = new URLSearchParams(window.location.search).get("window") ?? "pet";
-const content = route === "pet" ? <PetSurface status="idle" /> : <App />;
+const queryLabel = new URLSearchParams(window.location.search).get("window");
+const windowLabel = queryLabel ?? getCurrentWindow().label;
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
-    {content}
+    <App windowLabel={windowLabel} />
   </React.StrictMode>,
 );
