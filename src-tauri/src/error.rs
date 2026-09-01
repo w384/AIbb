@@ -105,7 +105,7 @@ impl AppError {
             500..=599 => ErrorCode::ProviderUnavailable,
             _ => ErrorCode::InvalidRequest,
         };
-        let redacted_body = redact_secret(body, current_key);
+        let redacted_body = sanitize_sensitive_text(body, current_key);
 
         Self {
             code: code.as_str().to_owned(),
@@ -119,7 +119,7 @@ impl AppError {
         diagnostic: impl AsRef<str>,
         current_key: Option<&str>,
     ) -> Self {
-        self.diagnostic = Some(redact_secret(diagnostic.as_ref(), current_key));
+        self.diagnostic = Some(sanitize_sensitive_text(diagnostic.as_ref(), current_key));
         self
     }
 
@@ -134,23 +134,62 @@ impl AppError {
     ) -> Self {
         let code = code.into();
         Self::new(
-            redact_secret(&code, current_key),
-            redact_secret(message.as_ref(), current_key),
+            sanitize_sensitive_text(&code, current_key),
+            sanitize_sensitive_text(message.as_ref(), current_key),
         )
     }
 }
 
-fn redact_secret(value: &str, current_key: Option<&str>) -> String {
+pub(crate) fn sanitize_sensitive_text(value: &str, current_key: Option<&str>) -> String {
     let mut safe = value
         .lines()
         .map(redact_authorization_values)
         .collect::<Vec<_>>()
         .join("\n");
+    safe = redact_bearer_tokens(&safe);
 
     if let Some(api_key) = current_key.filter(|key| !key.is_empty()) {
         safe = safe.replace(api_key, "[REDACTED]");
     }
 
+    safe
+}
+
+fn redact_bearer_tokens(value: &str) -> String {
+    let mut safe = String::with_capacity(value.len());
+    let mut remaining = value;
+    while let Some(offset) = remaining.to_ascii_lowercase().find("bearer") {
+        let keyword_end = offset + "bearer".len();
+        safe.push_str(&remaining[..keyword_end]);
+        remaining = &remaining[keyword_end..];
+
+        let whitespace_bytes = remaining
+            .char_indices()
+            .take_while(|(_, character)| character.is_whitespace())
+            .map(|(index, character)| index + character.len_utf8())
+            .last()
+            .unwrap_or(0);
+        safe.push_str(&remaining[..whitespace_bytes]);
+        remaining = &remaining[whitespace_bytes..];
+        if whitespace_bytes == 0 {
+            continue;
+        }
+
+        let secret_end = remaining
+            .char_indices()
+            .find(|(_, character)| {
+                character.is_whitespace()
+                    || matches!(character, '"' | '\'' | ',' | '}' | ']' | '\\')
+            })
+            .map(|(index, _)| index)
+            .unwrap_or(remaining.len());
+        if secret_end == 0 {
+            continue;
+        }
+        safe.push_str("[REDACTED]");
+        remaining = &remaining[secret_end..];
+    }
+    safe.push_str(remaining);
     safe
 }
 

@@ -21,6 +21,31 @@ impl NativeCredentialStore {
     }
 }
 
+pub(crate) struct FixedCredentialStore {
+    api_key: Option<String>,
+}
+
+impl FixedCredentialStore {
+    pub(crate) fn new(api_key: Option<String>) -> Self {
+        Self { api_key }
+    }
+}
+
+#[async_trait]
+impl CredentialStore for FixedCredentialStore {
+    async fn get(&self) -> Result<Option<String>, AppError> {
+        Ok(self.api_key.clone())
+    }
+
+    async fn set(&self, _api_key: &str) -> Result<(), AppError> {
+        Err(fixed_credential_error())
+    }
+
+    async fn clear(&self) -> Result<(), AppError> {
+        Err(fixed_credential_error())
+    }
+}
+
 #[async_trait]
 impl CredentialStore for NativeCredentialStore {
     async fn get(&self) -> Result<Option<String>, AppError> {
@@ -49,5 +74,12 @@ fn credential_error() -> AppError {
     AppError::new(
         "credentialStoreUnavailable",
         "The protected API credential could not be accessed.",
+    )
+}
+
+fn fixed_credential_error() -> AppError {
+    AppError::new(
+        "fixedCredentialSnapshot",
+        "The task credential snapshot cannot be changed.",
     )
 }

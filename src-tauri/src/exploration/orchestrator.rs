@@ -10,10 +10,13 @@ use uuid::Uuid;
 
 use crate::{
     domain::{ExplorationResult, MemoryContext, SummaryCandidate, WebMaterial, WebMode},
-    error::{AppError, ErrorCode},
+    error::{sanitize_sensitive_text, AppError, ErrorCode},
     llm::{ChatMessage, ChatRequest, LlmTransport, NativeWebOutcome, NativeWebRequest},
     memory::{ContextBuilder, MemoryRepository},
-    prompts::{build_exploration_prompt, ModelPrompt, SUMMARIZATION_INSTRUCTION},
+    prompts::{
+        build_exploration_prompt, ModelPrompt, EXPLORATION_SYSTEM_INSTRUCTION,
+        SUMMARIZATION_INSTRUCTION,
+    },
     web::{DuckDuckGoHtmlSearch, FetchBudget, PageFetcher, SafePageFetcher, SearchProvider},
 };
 
@@ -41,15 +44,12 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     if matches!(input, "去玩" | "出去玩") {
         return UserInputIntent::Explore { direction: None };
     }
-    if input.starts_with("去年") {
-        return UserInputIntent::Chat;
-    }
 
     if let Some(direction) = input
         .strip_prefix('去')
-        .and_then(|value| value.strip_suffix('玩'))
+        .and_then(|value| value.strip_suffix("方向玩"))
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| is_safe_direction(value))
     {
         return UserInputIntent::Explore {
             direction: Some(direction.to_string()),
@@ -60,7 +60,19 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
         .strip_prefix('往')
         .and_then(|value| value.strip_suffix("方向玩"))
         .map(str::trim)
-        .filter(|value| !value.is_empty())
+        .filter(|value| is_safe_direction(value))
+    {
+        return UserInputIntent::Explore {
+            direction: Some(direction.to_string()),
+        };
+    }
+
+    if let Some(direction) = input
+        .strip_prefix('去')
+        .and_then(|value| value.strip_suffix('玩'))
+        .filter(|value| *value == value.trim())
+        .filter(|value| value.chars().count() <= 4)
+        .filter(|value| is_safe_direction(value))
     {
         return UserInputIntent::Explore {
             direction: Some(direction.to_string()),
@@ -68,6 +80,40 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     }
 
     UserInputIntent::Chat
+}
+
+fn is_safe_direction(direction: &str) -> bool {
+    !direction.is_empty()
+        && !direction
+            .chars()
+            .any(|character| character.is_control() || is_unicode_format(character))
+}
+
+fn is_unicode_format(character: char) -> bool {
+    matches!(
+        character,
+        '\u{00ad}'
+            | '\u{0600}'..='\u{0605}'
+            | '\u{061c}'
+            | '\u{06dd}'
+            | '\u{070f}'
+            | '\u{0890}'..='\u{0891}'
+            | '\u{08e2}'
+            | '\u{180e}'
+            | '\u{200b}'..='\u{200f}'
+            | '\u{202a}'..='\u{202e}'
+            | '\u{2060}'..='\u{2064}'
+            | '\u{2066}'..='\u{206f}'
+            | '\u{feff}'
+            | '\u{fff9}'..='\u{fffb}'
+            | '\u{110bd}'
+            | '\u{110cd}'
+            | '\u{13430}'..='\u{13455}'
+            | '\u{1bca0}'..='\u{1bca3}'
+            | '\u{1d173}'..='\u{1d17a}'
+            | '\u{e0001}'
+            | '\u{e0020}'..='\u{e007f}'
+    )
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -234,22 +280,78 @@ pub trait PublicWebFactory: Send + Sync {
     fn create(&self, cancellation: CancellationToken) -> Result<PublicWebRuntime, AppError>;
 }
 
-#[async_trait]
-pub trait ExplorationPreferences: Send + Sync {
-    async fn web_mode(&self) -> Result<WebMode, AppError>;
+#[derive(Clone)]
+pub enum ExplorationTaskCredential {
+    Exact(String),
+    Missing,
+    Unavailable,
+}
+
+impl ExplorationTaskCredential {
+    pub fn exact(api_key: impl Into<String>) -> Self {
+        let api_key = api_key.into();
+        if api_key.is_empty() {
+            Self::Missing
+        } else {
+            Self::Exact(api_key)
+        }
+    }
+
+    pub const fn missing() -> Self {
+        Self::Missing
+    }
+
+    pub const fn unavailable() -> Self {
+        Self::Unavailable
+    }
+
+    fn exact_key(&self) -> Option<&str> {
+        match self {
+            Self::Exact(api_key) => Some(api_key),
+            Self::Missing | Self::Unavailable => None,
+        }
+    }
+}
+
+pub struct ExplorationTaskRuntime {
+    llm: Arc<dyn LlmTransport>,
+    web_mode: WebMode,
+    credential: ExplorationTaskCredential,
+}
+
+impl ExplorationTaskRuntime {
+    pub fn new(
+        llm: Arc<dyn LlmTransport>,
+        web_mode: WebMode,
+        credential: ExplorationTaskCredential,
+    ) -> Self {
+        Self {
+            llm,
+            web_mode,
+            credential,
+        }
+    }
 }
 
 #[async_trait]
-pub trait ExplorationSecrets: Send + Sync {
-    async fn current_api_key(&self) -> Result<Option<String>, AppError>;
+pub trait ExplorationRuntimeFactory: Send + Sync {
+    async fn create(&self) -> Result<ExplorationTaskRuntime, AppError>;
 }
 
-struct StaticPreferences(WebMode);
+struct StaticRuntimeFactory {
+    llm: Arc<dyn LlmTransport>,
+    web_mode: WebMode,
+    credential: ExplorationTaskCredential,
+}
 
 #[async_trait]
-impl ExplorationPreferences for StaticPreferences {
-    async fn web_mode(&self) -> Result<WebMode, AppError> {
-        Ok(self.0)
+impl ExplorationRuntimeFactory for StaticRuntimeFactory {
+    async fn create(&self) -> Result<ExplorationTaskRuntime, AppError> {
+        Ok(ExplorationTaskRuntime::new(
+            self.llm.clone(),
+            self.web_mode,
+            self.credential.clone(),
+        ))
     }
 }
 
@@ -334,12 +436,10 @@ impl Notifier for NoopNotifier {
 pub struct ExplorationOrchestrator {
     store: Arc<dyn ExplorationStore>,
     memory: Arc<dyn ExplorationMemory>,
-    llm: Arc<dyn LlmTransport>,
+    runtime_factory: Arc<dyn ExplorationRuntimeFactory>,
     web: Arc<dyn PublicWebFactory>,
     events: Arc<dyn ExplorationEventSink>,
     notifier: Arc<dyn Notifier>,
-    preferences: Arc<dyn ExplorationPreferences>,
-    secrets: Arc<dyn ExplorationSecrets>,
     cancellations: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
 }
 
@@ -353,40 +453,37 @@ impl ExplorationOrchestrator {
         events: Arc<dyn ExplorationEventSink>,
         notifier: Arc<dyn Notifier>,
         web_mode: WebMode,
-        secrets: Arc<dyn ExplorationSecrets>,
+        credential: ExplorationTaskCredential,
     ) -> Self {
-        Self::with_preferences(
+        Self::with_runtime_factory(
             store,
             memory,
-            llm,
+            Arc::new(StaticRuntimeFactory {
+                llm,
+                web_mode,
+                credential,
+            }),
             web,
             events,
             notifier,
-            Arc::new(StaticPreferences(web_mode)),
-            secrets,
         )
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn with_preferences(
+    pub fn with_runtime_factory(
         store: Arc<dyn ExplorationStore>,
         memory: Arc<dyn ExplorationMemory>,
-        llm: Arc<dyn LlmTransport>,
+        runtime_factory: Arc<dyn ExplorationRuntimeFactory>,
         web: Arc<dyn PublicWebFactory>,
         events: Arc<dyn ExplorationEventSink>,
         notifier: Arc<dyn Notifier>,
-        preferences: Arc<dyn ExplorationPreferences>,
-        secrets: Arc<dyn ExplorationSecrets>,
     ) -> Self {
         Self {
             store,
             memory,
-            llm,
+            runtime_factory,
             web,
             events,
             notifier,
-            preferences,
-            secrets,
             cancellations: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -498,23 +595,24 @@ impl ExplorationOrchestrator {
         cancellation: CancellationToken,
     ) -> Result<ExplorationResult, AppError> {
         ensure_not_cancelled(&cancellation)?;
+        let runtime = self.runtime_factory.create().await?;
         let context = self
             .memory
             .build_context(request.direction.clone().unwrap_or_default())
             .await?;
         self.progress(task_id, ExplorationStatus::Choosing).await?;
 
-        let web_mode = self.preferences.web_mode().await?;
+        let web_mode = runtime.web_mode;
         let raw = match web_mode {
             WebMode::Off => {
-                self.public_exploration(task_id, context.clone(), cancellation.clone())
+                self.public_exploration(task_id, context.clone(), &runtime, cancellation.clone())
                     .await?
             }
             WebMode::Auto | WebMode::Force => {
                 self.progress(task_id, ExplorationStatus::NativeSearching)
                     .await?;
                 let prompt = build_exploration_prompt(context.clone(), WebMaterial::empty());
-                match self
+                match runtime
                     .llm
                     .try_native_web(
                         NativeWebRequest {
@@ -529,13 +627,13 @@ impl ExplorationOrchestrator {
                         raw
                     }
                     Ok(NativeWebOutcome::Unsupported) if web_mode == WebMode::Auto => {
-                        self.public_exploration(task_id, context, cancellation.clone())
+                        self.public_exploration(task_id, context, &runtime, cancellation.clone())
                             .await?
                     }
                     Err(error)
                         if web_mode == WebMode::Auto && is_native_capability_error(&error) =>
                     {
-                        self.public_exploration(task_id, context, cancellation.clone())
+                        self.public_exploration(task_id, context, &runtime, cancellation.clone())
                             .await?
                     }
                     Ok(NativeWebOutcome::Unsupported) => {
@@ -556,11 +654,14 @@ impl ExplorationOrchestrator {
                 self.progress(task_id, ExplorationStatus::Correcting)
                     .await?;
                 let correction = build_contract_correction(&raw, violation);
-                let corrected = self
+                let corrected = runtime
                     .llm
                     .complete(
                         ChatRequest {
-                            messages: vec![ChatMessage::user(correction)],
+                            messages: vec![
+                                ChatMessage::new("system", EXPLORATION_SYSTEM_INSTRUCTION),
+                                ChatMessage::user(correction),
+                            ],
                         },
                         cancellation.clone(),
                     )
@@ -568,7 +669,7 @@ impl ExplorationOrchestrator {
                 match parse_exploration_result(&corrected) {
                     Ok(result) => result,
                     Err(_) => {
-                        let safe_raw = self.sanitize_raw(&corrected).await;
+                        let safe_raw = sanitize_raw(&corrected, &runtime.credential);
                         self.store
                             .fail(task_id, "format_incomplete", Some(&safe_raw))
                             .await?;
@@ -581,11 +682,11 @@ impl ExplorationOrchestrator {
             }
         };
 
-        let result = self.sanitize_result(result).await;
+        let result = sanitize_result(result, &runtime.credential);
         self.store
             .complete(task_id, &result, &result.raw_response)
             .await?;
-        self.summarize_once(cancellation.clone()).await;
+        self.summarize_once(&runtime, cancellation.clone()).await;
         let _ = self
             .events
             .emit(ExplorationEvent::Complete {
@@ -601,21 +702,28 @@ impl ExplorationOrchestrator {
         &self,
         task_id: Uuid,
         context: MemoryContext,
+        task_runtime: &ExplorationTaskRuntime,
         cancellation: CancellationToken,
     ) -> Result<String, AppError> {
         self.progress(task_id, ExplorationStatus::PublicSearching)
             .await?;
-        let query_raw = self
+        let query_raw = task_runtime
             .llm
             .complete(build_query_request(&context), cancellation.clone())
             .await?;
         let queries = parse_query_envelope(&query_raw)?;
-        let runtime = self.web.create(cancellation.clone())?;
+        let public_web = self.web.create(cancellation.clone())?;
         let mut seen = HashSet::new();
         let mut urls = Vec::new();
         for query in queries {
             ensure_not_cancelled(&cancellation)?;
-            for url in runtime.search.search(&query, 2).await? {
+            for url in public_web
+                .search
+                .search(&query, 2)
+                .await?
+                .into_iter()
+                .take(2)
+            {
                 if seen.insert(url.clone()) {
                     urls.push(url);
                     if urls.len() == 8 {
@@ -632,7 +740,7 @@ impl ExplorationOrchestrator {
         let mut pages = Vec::new();
         for url in urls.into_iter().take(8) {
             ensure_not_cancelled(&cancellation)?;
-            match runtime.fetcher.fetch(&url).await {
+            match public_web.fetcher.fetch(&url).await {
                 Ok(page) => pages.push(format!(
                     "标题：{}\n地址：{}\n正文：{}",
                     page.title, page.canonical_url, page.text
@@ -644,7 +752,8 @@ impl ExplorationOrchestrator {
 
         self.progress(task_id, ExplorationStatus::Writing).await?;
         let prompt = build_exploration_prompt(context, WebMaterial { pages });
-        self.llm
+        task_runtime
+            .llm
             .complete(prompt_as_chat_request(&prompt), cancellation)
             .await
     }
@@ -658,7 +767,14 @@ impl ExplorationOrchestrator {
         Ok(())
     }
 
-    async fn summarize_once(&self, cancellation: CancellationToken) {
+    async fn summarize_once(
+        &self,
+        runtime: &ExplorationTaskRuntime,
+        cancellation: CancellationToken,
+    ) {
+        let Some(exact_key) = runtime.credential.exact_key() else {
+            return;
+        };
         let Ok(Some(candidate)) = self.memory.summary_candidate().await else {
             return;
         };
@@ -674,10 +790,18 @@ impl ExplorationOrchestrator {
                 ChatMessage::user(messages),
             ],
         };
-        if let Ok(summary) = self.llm.complete(request, cancellation).await {
-            let summary = self.sanitize_raw(&summary).await;
-            let _ = self.memory.save_summary(&candidate, summary).await;
+        let Ok(summary) = runtime.llm.complete(request, cancellation).await else {
+            return;
+        };
+        let summary = sanitize_sensitive_text(&summary, Some(exact_key));
+        let summary = summary.trim();
+        if summary.is_empty() {
+            return;
         }
+        let _ = self
+            .memory
+            .save_summary(&candidate, summary.to_string())
+            .await;
     }
 
     async fn emit_error(&self, task_id: Uuid, error: AppError) {
@@ -691,30 +815,6 @@ impl ExplorationOrchestrator {
             .await;
     }
 
-    async fn sanitize_result(&self, mut result: ExplorationResult) -> ExplorationResult {
-        match self.secrets.current_api_key().await {
-            Ok(Some(api_key)) if !api_key.is_empty() => {
-                for item in &mut result.items {
-                    *item = sanitize_with_key(item, Some(&api_key));
-                }
-                result.next_outing_request =
-                    sanitize_with_key(&result.next_outing_request, Some(&api_key));
-                result.raw_response = sanitize_with_key(&result.raw_response, Some(&api_key));
-            }
-            Ok(_) | Err(_) => {
-                result.raw_response = "[RAW RESPONSE OMITTED]".to_string();
-            }
-        }
-        result
-    }
-
-    async fn sanitize_raw(&self, raw: &str) -> String {
-        match self.secrets.current_api_key().await {
-            Ok(Some(api_key)) if !api_key.is_empty() => sanitize_with_key(raw, Some(&api_key)),
-            Ok(_) | Err(_) => "[RAW RESPONSE OMITTED]".to_string(),
-        }
-    }
-
     fn cancellation(&self, task_id: Uuid) -> Result<Option<CancellationToken>, AppError> {
         Ok(self
             .cancellations
@@ -723,6 +823,30 @@ impl ExplorationOrchestrator {
             .get(&task_id)
             .cloned())
     }
+}
+
+fn sanitize_result(
+    mut result: ExplorationResult,
+    credential: &ExplorationTaskCredential,
+) -> ExplorationResult {
+    let exact_key = credential.exact_key();
+    for item in &mut result.items {
+        *item = sanitize_sensitive_text(item, exact_key);
+    }
+    result.next_outing_request = sanitize_sensitive_text(&result.next_outing_request, exact_key);
+    if exact_key.is_some() {
+        result.raw_response = sanitize_sensitive_text(&result.raw_response, exact_key);
+    } else {
+        result.raw_response = "[RAW RESPONSE OMITTED]".to_string();
+    }
+    result
+}
+
+fn sanitize_raw(raw: &str, credential: &ExplorationTaskCredential) -> String {
+    credential
+        .exact_key()
+        .map(|api_key| sanitize_sensitive_text(raw, Some(api_key)))
+        .unwrap_or_else(|| "[RAW RESPONSE OMITTED]".to_string())
 }
 
 #[derive(Deserialize)]
@@ -819,52 +943,6 @@ fn is_native_capability_error(error: &AppError) -> bool {
         error.code.as_str(),
         "provider_capability_unsupported" | "native_web_unsupported"
     )
-}
-
-fn redact_sensitive_raw(raw: &str) -> String {
-    let mut safe = String::with_capacity(raw.len());
-    let mut remaining = raw;
-    while let Some(offset) = remaining.to_ascii_lowercase().find("bearer") {
-        let keyword_end = offset + "bearer".len();
-        safe.push_str(&remaining[..keyword_end]);
-        remaining = &remaining[keyword_end..];
-
-        let whitespace_bytes = remaining
-            .char_indices()
-            .take_while(|(_, character)| character.is_whitespace())
-            .map(|(index, character)| index + character.len_utf8())
-            .last()
-            .unwrap_or(0);
-        safe.push_str(&remaining[..whitespace_bytes]);
-        remaining = &remaining[whitespace_bytes..];
-        if whitespace_bytes == 0 {
-            continue;
-        }
-
-        let secret_end = remaining
-            .char_indices()
-            .find(|(_, character)| {
-                character.is_whitespace()
-                    || matches!(character, '"' | '\'' | ',' | '}' | ']' | '\\')
-            })
-            .map(|(index, _)| index)
-            .unwrap_or(remaining.len());
-        if secret_end == 0 {
-            continue;
-        }
-        safe.push_str("[REDACTED]");
-        remaining = &remaining[secret_end..];
-    }
-    safe.push_str(remaining);
-    safe
-}
-
-fn sanitize_with_key(raw: &str, api_key: Option<&str>) -> String {
-    let exact_redacted = api_key
-        .filter(|key| !key.is_empty())
-        .map(|key| raw.replace(key, "[REDACTED]"))
-        .unwrap_or_else(|| raw.to_string());
-    redact_sensitive_raw(&exact_redacted)
 }
 
 fn query_error() -> AppError {

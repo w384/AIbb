@@ -38,7 +38,17 @@ fn get_bootstrap_state(state: tauri::State<'_, AppState>) -> Result<BootstrapSta
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    #[cfg(desktop)]
+    let builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+        use tauri::Manager;
+
+        if let Some(pet) = app.get_webview_window("pet") {
+            let _ = pet.set_focus();
+        }
+    }));
+
+    builder
         .setup(|app| {
             use tauri::Manager;
 
@@ -84,6 +94,29 @@ pub fn run() {
 #[cfg(test)]
 mod tests {
     use std::{fs, path::Path};
+
+    #[test]
+    fn single_instance_plugin_precedes_setup_and_interrupted_task_recovery() {
+        let source = include_str!("lib.rs");
+        let plugin = source
+            .find(".plugin(tauri_plugin_single_instance::init")
+            .expect("single-instance plugin must be registered on the builder");
+        let setup = source
+            .find(".setup(|app|")
+            .expect("setup must be registered");
+        let recovery = source
+            .find("exploration.recover_interrupted()")
+            .expect("interrupted exploration recovery must remain wired");
+
+        assert!(
+            plugin < setup,
+            "single-instance must be registered before setup"
+        );
+        assert!(
+            plugin < recovery,
+            "single-instance must be registered before interrupted-task recovery"
+        );
+    }
 
     #[test]
     fn pet_capability_grants_only_its_required_renderer_permissions() {

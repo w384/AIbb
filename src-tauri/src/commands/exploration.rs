@@ -2,7 +2,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use tauri::Emitter;
-use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
@@ -10,11 +9,12 @@ use crate::{
     error::{AppError, ErrorCode},
     exploration::{
         DefaultPublicWebFactory, ExplorationEvent, ExplorationEventSink, ExplorationOrchestrator,
-        ExplorationPreferences, ExplorationRequest, ExplorationSecrets, NoopNotifier,
+        ExplorationRequest, ExplorationRuntimeFactory, ExplorationTaskCredential,
+        ExplorationTaskRuntime, NoopNotifier,
     },
-    llm::{ChatRequest, DeltaSink, LlmTransport, NativeWebOutcome, NativeWebRequest, OpenAiClient},
+    llm::OpenAiClient,
     memory::MemoryRepository,
-    settings::{CredentialStore, NativeCredentialStore, SettingsService},
+    settings::{FixedCredentialStore, SettingsService},
     storage::Database,
 };
 
@@ -24,24 +24,43 @@ pub(crate) fn build_exploration_orchestrator(
     memory: MemoryRepository,
     settings: SettingsService,
 ) -> ExplorationOrchestrator {
-    ExplorationOrchestrator::with_preferences(
+    ExplorationOrchestrator::with_runtime_factory(
         Arc::new(database),
         Arc::new(memory),
-        Arc::new(SettingsBackedLlm::new(settings.clone())),
+        Arc::new(SettingsExplorationRuntimeFactory::new(settings)),
         Arc::new(DefaultPublicWebFactory),
         Arc::new(TauriEventSink { app }),
         Arc::new(NoopNotifier),
-        Arc::new(SettingsPreferences { settings }),
-        Arc::new(CredentialSecrets),
     )
 }
 
-struct CredentialSecrets;
+pub struct SettingsExplorationRuntimeFactory {
+    settings: SettingsService,
+}
+
+impl SettingsExplorationRuntimeFactory {
+    pub fn new(settings: SettingsService) -> Self {
+        Self { settings }
+    }
+}
 
 #[async_trait]
-impl ExplorationSecrets for CredentialSecrets {
-    async fn current_api_key(&self) -> Result<Option<String>, AppError> {
-        NativeCredentialStore.get().await
+impl ExplorationRuntimeFactory for SettingsExplorationRuntimeFactory {
+    async fn create(&self) -> Result<ExplorationTaskRuntime, AppError> {
+        let snapshot = self.settings.exploration_task_snapshot().await?;
+        let (settings, api_key) = snapshot.into_parts();
+        let credential = api_key
+            .as_ref()
+            .filter(|key| !key.is_empty())
+            .map(|key| ExplorationTaskCredential::exact(key.clone()))
+            .unwrap_or_else(ExplorationTaskCredential::missing);
+        let web_mode = settings.web_mode;
+        let llm = OpenAiClient::new(settings, FixedCredentialStore::new(api_key));
+        Ok(ExplorationTaskRuntime::new(
+            Arc::new(llm),
+            web_mode,
+            credential,
+        ))
     }
 }
 
@@ -79,73 +98,6 @@ fn exploration_service_error() -> AppError {
         "exploration_service_unavailable",
         "The exploration service is unavailable.",
     )
-}
-
-struct SettingsPreferences {
-    settings: SettingsService,
-}
-
-#[async_trait]
-impl ExplorationPreferences for SettingsPreferences {
-    async fn web_mode(&self) -> Result<crate::domain::WebMode, AppError> {
-        Ok(self.settings.load().await?.web_mode)
-    }
-}
-
-struct SettingsBackedLlm {
-    settings: SettingsService,
-}
-
-impl SettingsBackedLlm {
-    fn new(settings: SettingsService) -> Self {
-        Self { settings }
-    }
-
-    async fn client(&self) -> Result<OpenAiClient, AppError> {
-        let settings = self.settings.load().await?;
-        Ok(OpenAiClient::from_shared(
-            settings,
-            Arc::new(NativeCredentialStore),
-        ))
-    }
-}
-
-#[async_trait]
-impl LlmTransport for SettingsBackedLlm {
-    async fn stream_chat(
-        &self,
-        request: ChatRequest,
-        sink: &dyn DeltaSink,
-        cancellation: CancellationToken,
-    ) -> Result<(), AppError> {
-        self.client()
-            .await?
-            .stream_chat(request, sink, cancellation)
-            .await
-    }
-
-    async fn complete(
-        &self,
-        request: ChatRequest,
-        cancellation: CancellationToken,
-    ) -> Result<String, AppError> {
-        self.client().await?.complete(request, cancellation).await
-    }
-
-    async fn try_native_web(
-        &self,
-        request: NativeWebRequest,
-        cancellation: CancellationToken,
-    ) -> Result<NativeWebOutcome, AppError> {
-        self.client()
-            .await?
-            .try_native_web(request, cancellation)
-            .await
-    }
-
-    async fn test_connection(&self, cancellation: CancellationToken) -> Result<(), AppError> {
-        self.client().await?.test_connection(cancellation).await
-    }
 }
 
 struct TauriEventSink {

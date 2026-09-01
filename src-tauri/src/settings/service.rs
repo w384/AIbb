@@ -35,6 +35,17 @@ pub struct SaveSettings {
     pub autostart: bool,
 }
 
+pub struct ExplorationTaskSnapshot {
+    settings: ApiSettings,
+    api_key: Option<String>,
+}
+
+impl ExplorationTaskSnapshot {
+    pub(crate) fn into_parts(self) -> (ApiSettings, Option<String>) {
+        (self.settings, self.api_key)
+    }
+}
+
 #[derive(Clone)]
 pub struct SettingsService {
     database: Database,
@@ -66,6 +77,29 @@ impl SettingsService {
             always_on_top: persisted.always_on_top,
             autostart: persisted.autostart,
             api_configured,
+        })
+    }
+
+    pub async fn exploration_task_snapshot(&self) -> Result<ExplorationTaskSnapshot, AppError> {
+        let _operation = self.operation.lock().await;
+        let persisted = self.database.load_settings()?;
+        let web_mode = parse_web_mode(&persisted)?;
+        let api_key = self
+            .credentials
+            .get()
+            .await
+            .map_err(|_| credential_store_access_error())?;
+
+        Ok(ExplorationTaskSnapshot {
+            settings: ApiSettings {
+                api_base: persisted.api_base,
+                model: persisted.model,
+                web_mode,
+                always_on_top: persisted.always_on_top,
+                autostart: persisted.autostart,
+                api_configured: api_key.as_ref().is_some_and(|key| !key.is_empty()),
+            },
+            api_key,
         })
     }
 
