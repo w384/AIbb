@@ -2,6 +2,7 @@ fn main() {
     const COMMANDS: &[&str] = &[
         "toggle_chat_window",
         "open_settings_window",
+        "exit_app",
         "start_pet_drag",
         "save_pet_position",
         "test_connection",

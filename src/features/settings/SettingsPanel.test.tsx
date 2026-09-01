@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
 import {
   clearMemory,
+  exitApp,
   loadSettings,
   saveSettings,
   testConnection,
@@ -10,6 +11,7 @@ import {
 
 vi.mock("../../lib/tauri", () => ({
   clearMemory: vi.fn(),
+  exitApp: vi.fn(),
   loadSettings: vi.fn(),
   saveSettings: vi.fn(),
   testConnection: vi.fn(),
@@ -83,5 +85,14 @@ describe("SettingsPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "确认清除" }));
     await waitFor(() => expect(clearMemory).toHaveBeenCalledTimes(1));
+  });
+
+  it("offers an explicit exit action from settings", async () => {
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.click(screen.getByRole("button", { name: "退出 AIbb" }));
+
+    expect(exitApp).toHaveBeenCalledTimes(1);
   });
 });

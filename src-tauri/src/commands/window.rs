@@ -13,6 +13,11 @@ pub fn open_settings_window(app: AppHandle) -> Result<(), AppError> {
 }
 
 #[tauri::command]
+pub fn exit_app(app: AppHandle) {
+    app.exit(0);
+}
+
+#[tauri::command]
 pub fn start_pet_drag(window: WebviewWindow) -> Result<(), AppError> {
     window_controller::start_pet_drag(&window)
 }

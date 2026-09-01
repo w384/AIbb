@@ -1,6 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
 import type { ApiSettings, AppErrorPayload, SaveSettings, WebMode } from "../../contracts";
-import { clearMemory, loadSettings, saveSettings, testConnection } from "../../lib/tauri";
+import {
+  clearMemory,
+  exitApp,
+  loadSettings,
+  saveSettings,
+  testConnection,
+} from "../../lib/tauri";
 
 const EMPTY_SETTINGS: ApiSettings = {
   apiBase: "",
@@ -114,6 +120,7 @@ export function SettingsPanel() {
           <button type="submit">保存设置</button>
           <button type="button" onClick={() => void test()}>测试连接</button>
           <button type="button" onClick={() => setConfirmingClear(true)}>清除记忆</button>
+          <button type="button" onClick={() => void exitApp()}>退出 AIbb</button>
         </div>
       </form>
       {error && <p role="alert">{error.code}：{error.message}</p>}

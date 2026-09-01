@@ -7,6 +7,7 @@
     "allow-load-settings",
     "allow-save-settings",
     "allow-test-connection",
-    "allow-clear-memory"
+    "allow-clear-memory",
+    "allow-exit-app"
   ]
 }

@@ -75,6 +75,10 @@ export function clearMemory(): Promise<void> {
   return invoke("clear_memory");
 }
 
+export function exitApp(): Promise<void> {
+  return invoke("exit_app");
+}
+
 export const listenChatDelta = (listener: PayloadListener<ChatDeltaEvent>) =>
   listenFor("chat://delta", listener);
 export const listenChatComplete = (listener: PayloadListener<ChatCompleteEvent>) =>
