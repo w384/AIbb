@@ -1,7 +1,6 @@
 import {
   useEffect,
   useReducer,
-  useRef,
   useState,
   type PointerEvent as ReactPointerEvent,
 } from "react";
@@ -18,12 +17,8 @@ import {
   toggleChatWindow,
 } from "../../lib/tauri";
 import {
-  initialPetGestureState,
   initialPetState,
-  petReducer,
   petStatusReducer,
-  type PetGestureAction,
-  type PetGestureState,
 } from "./petReducer";
 
 interface PetSurfaceProps {
@@ -31,8 +26,6 @@ interface PetSurfaceProps {
 }
 
 export function PetSurface({ status }: PetSurfaceProps) {
-  const gesture = useRef<PetGestureState>(initialPetGestureState);
-  const openedOnPointerRelease = useRef(false);
   const [petState, dispatchPet] = useReducer(petStatusReducer, {
     ...initialPetState,
     status,
@@ -64,57 +57,12 @@ export function PetSurface({ status }: PetSurfaceProps) {
     };
   }, []);
 
-  function transition(action: PetGestureAction): PetGestureState {
-    gesture.current = petReducer(gesture.current, action);
-    return gesture.current;
-  }
-
-  function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+  function handleDragPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
     if (!event.isPrimary || event.button !== 0) {
       return;
     }
-    openedOnPointerRelease.current = false;
-    event.currentTarget.setPointerCapture?.(event.pointerId);
-    transition({
-      type: "pointerDown",
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-    });
-  }
-
-  function handlePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
-    const wasDragging = gesture.current.dragging;
-    const next = transition({
-      type: "pointerMove",
-      pointerId: event.pointerId,
-      x: event.clientX,
-      y: event.clientY,
-      leftButtonPressed: (event.buttons & 1) === 1,
-    });
-    if (!wasDragging && next.dragging) {
-      void startPetDrag();
-    }
-  }
-
-  function finishPointer(
-    event: ReactPointerEvent<HTMLButtonElement>,
-    releaseCapture: boolean,
-    opensChat: boolean,
-  ) {
-    const trackedPrimaryPointer = gesture.current.pointerId === event.pointerId;
-    const wasDragging = gesture.current.dragging;
-    transition({ type: "pointerEnd", pointerId: event.pointerId });
-    if (
-      releaseCapture &&
-      event.currentTarget.hasPointerCapture?.(event.pointerId)
-    ) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-    if (opensChat && trackedPrimaryPointer && !wasDragging) {
-      openedOnPointerRelease.current = true;
-      void openChat();
-    }
+    event.preventDefault();
+    void startPetDrag();
   }
 
   async function openChat() {
@@ -130,18 +78,6 @@ export function PetSurface({ status }: PetSurfaceProps) {
     }
   }
 
-  function handleClick() {
-    if (openedOnPointerRelease.current) {
-      openedOnPointerRelease.current = false;
-      return;
-    }
-    if (gesture.current.suppressClick) {
-      transition({ type: "clickConsumed" });
-      return;
-    }
-    void openChat();
-  }
-
   return (
     <main className="pet-surface" data-status={petState.status}>
       {petState.status === "returned" && (
@@ -151,19 +87,23 @@ export function PetSurface({ status }: PetSurfaceProps) {
       )}
       {chatOpenError && <p className="pet-error" role="alert">{chatOpenError}</p>}
       <button
+        aria-label="移动 AIbb"
+        className="pet-drag-handle"
+        title="按住这里移动 AIbb"
+        type="button"
+        onPointerDown={handleDragPointerDown}
+      >
+        <span aria-hidden="true">•••</span>
+      </button>
+      <button
         aria-label="AIbb"
         className="pet"
         type="button"
-        onClick={() => void handleClick()}
+        onClick={() => void openChat()}
         onContextMenu={(event) => {
           event.preventDefault();
           void openSettingsWindow();
         }}
-        onPointerDown={handlePointerDown}
-        onPointerMove={handlePointerMove}
-        onPointerUp={(event) => finishPointer(event, true, true)}
-        onPointerCancel={(event) => finishPointer(event, true, false)}
-        onLostPointerCapture={(event) => finishPointer(event, false, false)}
       >
         <span aria-hidden="true">🤖</span>
       </button>

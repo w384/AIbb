@@ -60,29 +60,6 @@ describe("PetSurface", () => {
     expect(mockToggleChat).toHaveBeenCalledTimes(1);
   });
 
-  it("opens chat on a left-button release before the browser dispatches click", () => {
-    const view = render(<PetSurface status="idle" />);
-    const pet = within(view.container).getByRole("button", { name: "AIbb" });
-
-    fireEvent.pointerDown(pet, {
-      button: 0,
-      buttons: 1,
-      clientX: 90,
-      clientY: 100,
-      isPrimary: true,
-      pointerId: 9,
-    });
-    fireEvent.pointerUp(pet, {
-      button: 0,
-      buttons: 0,
-      clientX: 90,
-      clientY: 100,
-      isPrimary: true,
-      pointerId: 9,
-    });
-    expect(mockToggleChat).toHaveBeenCalledTimes(1);
-  });
-
   it("shows a stable error when the chat window cannot open", async () => {
     mockToggleChat.mockRejectedValueOnce(new Error("native detail must not reach the pet"));
     const view = render(<PetSurface status="idle" />);
@@ -151,7 +128,7 @@ describe("PetSurface", () => {
     expect(listenExplorationError).toHaveBeenCalled();
   });
 
-  it("starts dragging after movement exceeds four pixels and suppresses chat", () => {
+  it("keeps the pet body dedicated to chat even when the pointer moves", () => {
     const view = render(<PetSurface status="idle" />);
     const pet = within(view.container).getByRole("button", { name: "AIbb" });
 
@@ -172,6 +149,23 @@ describe("PetSurface", () => {
     });
     fireEvent.pointerUp(pet, { clientX: 15, clientY: 10, pointerId: 1 });
     fireEvent.click(pet);
+
+    expect(mockStartPetDrag).not.toHaveBeenCalled();
+    expect(mockToggleChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts native window movement only from the dedicated drag handle", () => {
+    const view = render(<PetSurface status="idle" />);
+    const dragHandle = within(view.container).getByRole("button", {
+      name: "移动 AIbb",
+    });
+
+    fireEvent.pointerDown(dragHandle, {
+      button: 0,
+      buttons: 1,
+      isPrimary: true,
+      pointerId: 7,
+    });
 
     expect(mockStartPetDrag).toHaveBeenCalledTimes(1);
     expect(mockToggleChat).not.toHaveBeenCalled();
