@@ -12,6 +12,9 @@ pub mod storage;
 pub mod web;
 
 use app_state::AppState;
+use commands::exploration::{
+    build_exploration_orchestrator, cancel_exploration, start_exploration,
+};
 use commands::memory::clear_memory;
 use commands::settings::{clear_api_key, load_settings, save_settings, test_connection};
 use commands::window::{
@@ -42,9 +45,21 @@ pub fn run() {
             let database_path = app.path().app_data_dir()?.join("aibb.sqlite3");
             let database = Database::open(database_path)?;
             let settings = SettingsService::new(database.clone(), NativeCredentialStore);
-            let memory = MemoryRepository::new(database);
+            let memory = MemoryRepository::new(database.clone());
             let bootstrap = tauri::async_runtime::block_on(settings.load_bootstrap_state())?;
-            app.manage(AppState::new(bootstrap, settings.clone(), memory));
+            let exploration = build_exploration_orchestrator(
+                app.handle().clone(),
+                database,
+                memory.clone(),
+                settings.clone(),
+            );
+            tauri::async_runtime::block_on(exploration.recover_interrupted())?;
+            app.manage(AppState::with_exploration(
+                bootstrap,
+                settings.clone(),
+                memory,
+                exploration,
+            ));
             platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
             Ok(())
         })
@@ -58,7 +73,9 @@ pub fn run() {
             save_settings,
             clear_api_key,
             test_connection,
-            clear_memory
+            clear_memory,
+            start_exploration,
+            cancel_exploration
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

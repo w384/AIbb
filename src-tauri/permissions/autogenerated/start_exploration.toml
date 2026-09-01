@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-start-exploration"
+description = "Enables the start_exploration command without any pre-configured scope."
+commands.allow = ["start_exploration"]
+
+[[permission]]
+identifier = "deny-start-exploration"
+description = "Denies the start_exploration command without any pre-configured scope."
+commands.deny = ["start_exploration"]

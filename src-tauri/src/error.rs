@@ -15,6 +15,8 @@ pub enum ErrorCode {
     PublicPageUnavailable,
     RedirectLimitExceeded,
     PageBudgetExceeded,
+    ProviderCapabilityUnsupported,
+    NativeWebUnsupported,
 }
 
 impl ErrorCode {
@@ -35,6 +37,8 @@ impl ErrorCode {
             Self::PublicPageUnavailable => "public_page_unavailable",
             Self::RedirectLimitExceeded => "redirect_limit_exceeded",
             Self::PageBudgetExceeded => "page_budget_exceeded",
+            Self::ProviderCapabilityUnsupported => "provider_capability_unsupported",
+            Self::NativeWebUnsupported => "native_web_unsupported",
         }
     }
 
@@ -55,6 +59,12 @@ impl ErrorCode {
             Self::PublicPageUnavailable => "The public page is temporarily unavailable.",
             Self::RedirectLimitExceeded => "The public page redirected too many times.",
             Self::PageBudgetExceeded => "The public page exploration limit was reached.",
+            Self::ProviderCapabilityUnsupported => {
+                "The model provider does not support the requested capability."
+            }
+            Self::NativeWebUnsupported => {
+                "The model provider does not support native web exploration."
+            }
         }
     }
 }

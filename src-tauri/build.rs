@@ -5,6 +5,8 @@ fn main() {
         "start_pet_drag",
         "save_pet_position",
         "test_connection",
+        "start_exploration",
+        "cancel_exploration",
     ];
 
     let attributes = tauri_build::Attributes::new()
