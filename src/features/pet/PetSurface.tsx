@@ -1,4 +1,10 @@
-import { useEffect, useReducer, useRef, type PointerEvent as ReactPointerEvent } from "react";
+import {
+  useEffect,
+  useReducer,
+  useRef,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+} from "react";
 import type {
   ExplorationStatus,
   PetStatus,
@@ -26,10 +32,12 @@ interface PetSurfaceProps {
 
 export function PetSurface({ status }: PetSurfaceProps) {
   const gesture = useRef<PetGestureState>(initialPetGestureState);
+  const openedOnPointerRelease = useRef(false);
   const [petState, dispatchPet] = useReducer(petStatusReducer, {
     ...initialPetState,
     status,
   });
+  const [chatOpenError, setChatOpenError] = useState<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -65,6 +73,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
     if (!event.isPrimary || event.button !== 0) {
       return;
     }
+    openedOnPointerRelease.current = false;
     event.currentTarget.setPointerCapture?.(event.pointerId);
     transition({
       type: "pointerDown",
@@ -91,7 +100,10 @@ export function PetSurface({ status }: PetSurfaceProps) {
   function finishPointer(
     event: ReactPointerEvent<HTMLButtonElement>,
     releaseCapture: boolean,
+    opensChat: boolean,
   ) {
+    const trackedPrimaryPointer = gesture.current.pointerId === event.pointerId;
+    const wasDragging = gesture.current.dragging;
     transition({ type: "pointerEnd", pointerId: event.pointerId });
     if (
       releaseCapture &&
@@ -99,17 +111,35 @@ export function PetSurface({ status }: PetSurfaceProps) {
     ) {
       event.currentTarget.releasePointerCapture(event.pointerId);
     }
+    if (opensChat && trackedPrimaryPointer && !wasDragging) {
+      openedOnPointerRelease.current = true;
+      void openChat();
+    }
   }
 
-  async function handleClick() {
+  async function openChat() {
+    setChatOpenError(null);
+    try {
+      await toggleChatWindow();
+    } catch {
+      setChatOpenError("暂时没能打开对话，请再点一次试试。");
+      return;
+    }
+    if (petState.status === "returned") {
+      dispatchPet({ type: "RESET_TO_IDLE" });
+    }
+  }
+
+  function handleClick() {
+    if (openedOnPointerRelease.current) {
+      openedOnPointerRelease.current = false;
+      return;
+    }
     if (gesture.current.suppressClick) {
       transition({ type: "clickConsumed" });
       return;
     }
-    await toggleChatWindow();
-    if (petState.status === "returned") {
-      dispatchPet({ type: "RESET_TO_IDLE" });
-    }
+    void openChat();
   }
 
   return (
@@ -119,6 +149,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
           我回来啦，点我看结果！
         </p>
       )}
+      {chatOpenError && <p className="pet-error" role="alert">{chatOpenError}</p>}
       <button
         aria-label="AIbb"
         className="pet"
@@ -130,9 +161,9 @@ export function PetSurface({ status }: PetSurfaceProps) {
         }}
         onPointerDown={handlePointerDown}
         onPointerMove={handlePointerMove}
-        onPointerUp={(event) => finishPointer(event, true)}
-        onPointerCancel={(event) => finishPointer(event, true)}
-        onLostPointerCapture={(event) => finishPointer(event, false)}
+        onPointerUp={(event) => finishPointer(event, true, true)}
+        onPointerCancel={(event) => finishPointer(event, true, false)}
+        onLostPointerCapture={(event) => finishPointer(event, false, false)}
       >
         <span aria-hidden="true">🤖</span>
       </button>

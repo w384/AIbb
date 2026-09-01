@@ -60,6 +60,40 @@ describe("PetSurface", () => {
     expect(mockToggleChat).toHaveBeenCalledTimes(1);
   });
 
+  it("opens chat on a left-button release before the browser dispatches click", () => {
+    const view = render(<PetSurface status="idle" />);
+    const pet = within(view.container).getByRole("button", { name: "AIbb" });
+
+    fireEvent.pointerDown(pet, {
+      button: 0,
+      buttons: 1,
+      clientX: 90,
+      clientY: 100,
+      isPrimary: true,
+      pointerId: 9,
+    });
+    fireEvent.pointerUp(pet, {
+      button: 0,
+      buttons: 0,
+      clientX: 90,
+      clientY: 100,
+      isPrimary: true,
+      pointerId: 9,
+    });
+    expect(mockToggleChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a stable error when the chat window cannot open", async () => {
+    mockToggleChat.mockRejectedValueOnce(new Error("native detail must not reach the pet"));
+    const view = render(<PetSurface status="idle" />);
+
+    fireEvent.click(within(view.container).getByRole("button", { name: "AIbb" }));
+
+    expect(await within(view.container).findByRole("alert")).toHaveTextContent(
+      "暂时没能打开对话，请再点一次试试。",
+    );
+  });
+
   it("shows a short return bubble for a completed exploration", () => {
     const view = render(<PetSurface status="returned" />);
 
