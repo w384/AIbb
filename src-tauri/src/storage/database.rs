@@ -27,6 +27,12 @@ pub struct PersistedSettings {
     pub pet_position: Option<(i32, i32)>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PersistedAibbProfile {
+    pub name: String,
+    pub version: i64,
+}
+
 #[derive(Clone)]
 pub struct Database {
     connection: Arc<Mutex<Connection>>,
@@ -84,6 +90,32 @@ impl Database {
                 "UPDATE app_settings SET api_base = ?1, model = ?2, web_mode = ?3, \
                  always_on_top = ?4, autostart = ?5 WHERE singleton = 1",
                 params![api_base, model, web_mode, always_on_top, autostart],
+            )
+            .map(|_| ())
+            .map_err(|_| storage_error())
+    }
+
+    pub fn load_aibb_profile(&self) -> Result<PersistedAibbProfile, AppError> {
+        self.connection()?
+            .query_row(
+                "SELECT aibb_name, profile_version FROM app_settings WHERE singleton = 1",
+                [],
+                |row| {
+                    Ok(PersistedAibbProfile {
+                        name: row.get(0)?,
+                        version: row.get(1)?,
+                    })
+                },
+            )
+            .map_err(|_| storage_error())
+    }
+
+    pub fn save_aibb_name(&self, name: &str) -> Result<(), AppError> {
+        self.connection()?
+            .execute(
+                "UPDATE app_settings SET aibb_name = ?1, profile_version = profile_version + 1 \
+                 WHERE singleton = 1",
+                params![name],
             )
             .map(|_| ())
             .map_err(|_| storage_error())

@@ -59,9 +59,19 @@ WHERE TRIM(model) = ''
   );
 "#;
 
+const AIBB_PROFILE: &str = r#"
+ALTER TABLE app_settings ADD COLUMN aibb_name TEXT NOT NULL DEFAULT 'AIbb';
+ALTER TABLE app_settings ADD COLUMN avatar_filename TEXT;
+ALTER TABLE app_settings ADD COLUMN profile_version INTEGER NOT NULL DEFAULT 0;
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
-    Migrations::new(vec![M::up(INITIAL_SCHEMA), M::up(DEEPSEEK_MODEL_BACKFILL)])
-        .to_latest(connection)
+    Migrations::new(vec![
+        M::up(INITIAL_SCHEMA),
+        M::up(DEEPSEEK_MODEL_BACKFILL),
+        M::up(AIBB_PROFILE),
+    ])
+    .to_latest(connection)
 }
 
 #[cfg(test)]
@@ -91,5 +101,31 @@ mod tests {
             )
             .unwrap();
         assert_eq!(model, "deepseek-v4-flash");
+    }
+
+    #[test]
+    fn adds_profile_columns_with_the_expected_defaults() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        Migrations::new(vec![M::up(INITIAL_SCHEMA)])
+            .to_latest(&mut connection)
+            .unwrap();
+
+        apply(&mut connection).unwrap();
+
+        let profile = connection
+            .query_row(
+                "SELECT aibb_name, avatar_filename, profile_version \
+                 FROM app_settings WHERE singleton = 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, Option<String>>(1)?,
+                        row.get::<_, i64>(2)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(profile, ("AIbb".into(), None, 0));
     }
 }

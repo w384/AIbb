@@ -5,13 +5,13 @@ use tokio::sync::Mutex as AsyncMutex;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    domain::{BootstrapState, PetStatus, WebMode},
+    domain::{AibbProfile, BootstrapState, PetStatus, WebMode},
     error::AppError,
     llm::{LlmTransport, OpenAiClient},
     storage::{Database, PersistedSettings},
 };
 
-use super::CredentialStore;
+use super::{profile::validate_aibb_name, CredentialStore};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -78,6 +78,23 @@ impl SettingsService {
             autostart: persisted.autostart,
             api_configured,
         })
+    }
+
+    pub async fn load_aibb_profile(&self) -> Result<AibbProfile, AppError> {
+        let _operation = self.operation.lock().await;
+        let profile = self.database.load_aibb_profile()?;
+
+        Ok(AibbProfile {
+            name: profile.name,
+            avatar_data_url: None,
+            version: profile.version,
+        })
+    }
+
+    pub async fn save_aibb_name(&self, name: String) -> Result<(), AppError> {
+        let _operation = self.operation.lock().await;
+        let name = validate_aibb_name(name)?;
+        self.database.save_aibb_name(&name)
     }
 
     pub async fn exploration_task_snapshot(&self) -> Result<ExplorationTaskSnapshot, AppError> {

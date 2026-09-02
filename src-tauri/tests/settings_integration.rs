@@ -7,7 +7,7 @@ use aibb_desktop_pet_lib::{
     error::AppError,
     memory::MemoryRepository,
     platform::window_controller::{self, restored_pet_position, Position, Size, WorkArea},
-    settings::{ApiSettings, CredentialStore, SaveSettings, SettingsService},
+    settings::{AibbProfile, ApiSettings, CredentialStore, SaveSettings, SettingsService},
     storage::Database,
 };
 use async_trait::async_trait;
@@ -173,6 +173,70 @@ impl TestDatabase {
     fn path(&self) -> &std::path::Path {
         &self.path
     }
+}
+
+#[tokio::test]
+async fn profile_defaults_to_aibb_and_survives_reopen() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new(db.handle(), FakeCredentialStore::default());
+
+    assert_eq!(
+        service.load_aibb_profile().await.unwrap(),
+        AibbProfile {
+            name: "AIbb".into(),
+            avatar_data_url: None,
+            version: 0,
+        }
+    );
+
+    service.save_aibb_name("  小团子  ".into()).await.unwrap();
+
+    assert_eq!(
+        SettingsService::new(db.reopen(), FakeCredentialStore::default())
+            .load_aibb_profile()
+            .await
+            .unwrap(),
+        AibbProfile {
+            name: "小团子".into(),
+            avatar_data_url: None,
+            version: 1,
+        }
+    );
+}
+
+#[tokio::test]
+async fn invalid_name_keeps_the_existing_profile() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new(db.handle(), FakeCredentialStore::default());
+    service.save_aibb_name("小团子".into()).await.unwrap();
+
+    for invalid_name in ["   ", "abcdefghijklmnopqrstuvwxy", "团\u{0007}子"] {
+        let error = service
+            .save_aibb_name(invalid_name.into())
+            .await
+            .unwrap_err();
+        assert_eq!(error.code, "invalidProfile");
+    }
+
+    assert_eq!(
+        service.load_aibb_profile().await.unwrap(),
+        AibbProfile {
+            name: "小团子".into(),
+            avatar_data_url: None,
+            version: 1,
+        }
+    );
+}
+
+#[tokio::test]
+async fn aibb_name_accepts_twenty_four_unicode_scalars() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new(db.handle(), FakeCredentialStore::default());
+    let name = "团".repeat(24);
+
+    service.save_aibb_name(name.clone()).await.unwrap();
+
+    assert_eq!(service.load_aibb_profile().await.unwrap().name, name);
 }
 
 #[tokio::test]
@@ -403,7 +467,7 @@ async fn persists_non_secret_settings_across_database_reopen() {
 }
 
 #[test]
-fn initial_migration_creates_the_required_schema_without_an_api_key_column() {
+fn migrations_create_the_required_schema_without_an_api_key_column() {
     let db = TestDatabase::new();
     let connection = rusqlite::Connection::open(db.path()).unwrap();
     let mut table_statement = connection
@@ -448,7 +512,10 @@ fn initial_migration_creates_the_required_schema_without_an_api_key_column() {
             "autostart",
             "first_run_complete",
             "pet_x",
-            "pet_y"
+            "pet_y",
+            "aibb_name",
+            "avatar_filename",
+            "profile_version"
         ]
     );
 }

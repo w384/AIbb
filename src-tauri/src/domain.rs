@@ -10,6 +10,14 @@ pub struct BootstrapState {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct AibbProfile {
+    pub name: String,
+    pub avatar_data_url: Option<String>,
+    pub version: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub enum PetStatus {
     Idle,
     Chatting,
