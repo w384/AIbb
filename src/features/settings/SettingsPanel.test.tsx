@@ -20,6 +20,10 @@ vi.mock("../../lib/tauri", () => ({
 describe("SettingsPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(saveSettings).mockResolvedValue();
+    vi.mocked(testConnection).mockResolvedValue();
+    vi.mocked(clearMemory).mockResolvedValue();
+    vi.mocked(exitApp).mockResolvedValue();
     vi.mocked(loadSettings).mockResolvedValue({
       apiBase: "https://example.test/v1",
       model: "m",
@@ -60,8 +64,12 @@ describe("SettingsPanel", () => {
   });
 
   it("saves the current API key before testing the connection", async () => {
-    vi.mocked(saveSettings).mockResolvedValue();
-    vi.mocked(testConnection).mockResolvedValue();
+    let finishSaving: (() => void) | undefined;
+    vi.mocked(saveSettings).mockImplementation(
+      () => new Promise<void>((resolve) => {
+        finishSaving = resolve;
+      }),
+    );
     render(<SettingsPanel />);
     await screen.findByLabelText("API 地址");
 
@@ -85,9 +93,28 @@ describe("SettingsPanel", () => {
         }),
       ),
     );
-    expect(testConnection).toHaveBeenCalledTimes(1);
-    expect(saveSettings).toHaveBeenCalledBefore(vi.mocked(testConnection));
+    expect(testConnection).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("API Key")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "保存并测试" })).toBeDisabled();
+
+    finishSaving?.();
+
+    await waitFor(() => expect(testConnection).toHaveBeenCalledTimes(1));
     expect(await screen.findByRole("status")).toHaveTextContent("连接成功");
+  });
+
+  it("does not test the connection when saving the current settings fails", async () => {
+    vi.mocked(saveSettings).mockRejectedValue({
+      code: "credentialStoreUnavailable",
+      message: "provider internal detail",
+    });
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.click(screen.getByRole("button", { name: "保存并测试" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("系统凭据服务");
+    expect(testConnection).not.toHaveBeenCalled();
   });
 
   it("explains that an empty API key keeps the saved credential", async () => {
@@ -114,6 +141,27 @@ describe("SettingsPanel", () => {
       ),
     );
     expect(screen.getByLabelText("API Key")).toHaveValue("");
+  });
+
+  it("shows that a newly entered API key is saved after a successful save", async () => {
+    vi.mocked(loadSettings).mockResolvedValue({
+      apiBase: "https://api.deepseek.com",
+      model: "deepseek-v4-flash",
+      webMode: "auto",
+      alwaysOnTop: true,
+      autostart: false,
+      apiConfigured: false,
+    });
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "new-key" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
+
+    await waitFor(() => expect(screen.getByLabelText("API Key")).toHaveValue(""));
+    expect(screen.getByLabelText("API Key")).toHaveAttribute("placeholder", "已安全保存");
   });
 
   it("requires an in-window confirmation before clearing memory", async () => {

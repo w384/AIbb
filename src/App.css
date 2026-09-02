@@ -196,6 +196,14 @@ body,
   box-shadow: 0 0 0 4px rgb(76 142 232 / 14%);
 }
 
+.field input:disabled,
+.field select:disabled,
+.toggle-option:has(input:disabled) {
+  color: #8c95a8;
+  background: #f0f3f8;
+  cursor: wait;
+}
+
 .settings-grid {
   display: grid;
   grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
@@ -257,6 +265,13 @@ body,
 
 .button:active {
   transform: translateY(0);
+}
+
+.button:disabled {
+  box-shadow: none;
+  cursor: wait;
+  opacity: 0.58;
+  transform: none;
 }
 
 .button.primary {

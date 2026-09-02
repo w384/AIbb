@@ -43,6 +43,7 @@ export function SettingsPanel() {
   const [error, setError] = useState<AppErrorPayload | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
+  const [settingsInFlight, setSettingsInFlight] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -67,14 +68,20 @@ export function SettingsPanel() {
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (settingsInFlight) return;
     setError(null);
     setNotice(null);
+    const payload = currentPayload();
+    const submittedKey = apiKey;
+    setSettingsInFlight(true);
     try {
-      await saveSettings(currentPayload());
-      setApiKey("");
+      await saveSettings(payload);
+      markSaved(payload, submittedKey);
       setNotice("设置已保存");
     } catch (reason) {
       setError(publicError(reason));
+    } finally {
+      setSettingsInFlight(false);
     }
   }
 
@@ -91,16 +98,32 @@ export function SettingsPanel() {
   }
 
   async function saveAndTest() {
+    if (settingsInFlight) return;
     setError(null);
     setNotice(null);
+    const payload = currentPayload();
+    const submittedKey = apiKey;
+    setSettingsInFlight(true);
     try {
-      await saveSettings(currentPayload());
+      await saveSettings(payload);
       await testConnection();
-      setApiKey("");
+      markSaved(payload, submittedKey);
       setNotice("设置已保存，连接成功");
     } catch (reason) {
       setError(publicError(reason));
+    } finally {
+      setSettingsInFlight(false);
     }
+  }
+
+  function markSaved(payload: SaveSettings, submittedKey: string) {
+    setSettings((current) => ({
+      ...current,
+      apiBase: payload.apiBase,
+      model: payload.model,
+      apiConfigured: current.apiConfigured || Boolean(payload.apiKey),
+    }));
+    setApiKey((current) => (current === submittedKey ? "" : current));
   }
 
   async function confirmClear() {
@@ -126,11 +149,12 @@ export function SettingsPanel() {
         </div>
       </header>
 
-      <form className="settings-form" onSubmit={save}>
+      <form className="settings-form" aria-busy={settingsInFlight} onSubmit={save}>
         <label className="field">
           <span>API 地址</span>
           <input
             type="url"
+            disabled={settingsInFlight}
             value={settings.apiBase}
             onChange={(event) => setSettings({ ...settings, apiBase: event.target.value })}
             placeholder="https://api.deepseek.com"
@@ -142,6 +166,7 @@ export function SettingsPanel() {
           <input
             id="api-key"
             type="password"
+            disabled={settingsInFlight}
             autoComplete="new-password"
             value={apiKey}
             onChange={(event) => setApiKey(event.target.value)}
@@ -154,6 +179,7 @@ export function SettingsPanel() {
           <label className="field">
             <span>模型名称</span>
             <input
+              disabled={settingsInFlight}
               value={settings.model}
               onChange={(event) => setSettings({ ...settings, model: event.target.value })}
               placeholder="deepseek-v4-flash"
@@ -162,6 +188,7 @@ export function SettingsPanel() {
           <label className="field">
             <span>联网模式</span>
             <select
+              disabled={settingsInFlight}
               value={settings.webMode}
               onChange={(event) => setSettings({ ...settings, webMode: event.target.value as WebMode })}
             >
@@ -176,6 +203,7 @@ export function SettingsPanel() {
           <label className="toggle-option">
             <input
               type="checkbox"
+              disabled={settingsInFlight}
               checked={settings.alwaysOnTop}
               onChange={(event) => setSettings({ ...settings, alwaysOnTop: event.target.checked })}
             />
@@ -184,6 +212,7 @@ export function SettingsPanel() {
           <label className="toggle-option">
             <input
               type="checkbox"
+              disabled={settingsInFlight}
               checked={settings.autostart}
               onChange={(event) => setSettings({ ...settings, autostart: event.target.checked })}
             />
@@ -192,8 +221,8 @@ export function SettingsPanel() {
         </div>
 
         <div className="button-row">
-          <button className="button secondary" type="submit">仅保存</button>
-          <button className="button primary" type="button" onClick={() => void saveAndTest()}>
+          <button className="button secondary" type="submit" disabled={settingsInFlight}>仅保存</button>
+          <button className="button primary" type="button" disabled={settingsInFlight} onClick={() => void saveAndTest()}>
             保存并测试
           </button>
         </div>
