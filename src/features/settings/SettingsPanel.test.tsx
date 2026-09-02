@@ -41,20 +41,61 @@ describe("SettingsPanel", () => {
     expect(screen.getByLabelText("开机启动")).not.toBeChecked();
   });
 
-  it("shows stable error codes from save and connection test failures", async () => {
-    vi.mocked(saveSettings).mockRejectedValue({ code: "settingsRollbackFailed", message: "safe" });
+  it("shows a Chinese authentication error without provider internals", async () => {
+    vi.mocked(saveSettings).mockResolvedValue();
     vi.mocked(testConnection).mockRejectedValue({
       code: "authentication_failed",
-      message: "safe",
+      message: "The model provider rejected the API credential.",
     });
     render(<SettingsPanel />);
     await screen.findByLabelText("API 地址");
 
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("settingsRollbackFailed");
+    fireEvent.click(screen.getByRole("button", { name: "保存并测试" }));
 
-    fireEvent.click(screen.getByRole("button", { name: "测试连接" }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("authentication_failed");
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("API Key");
+    expect(alert).toHaveTextContent("重新输入");
+    expect(alert).not.toHaveTextContent("authentication_failed");
+    expect(alert).not.toHaveTextContent("model provider");
+  });
+
+  it("saves the current API key before testing the connection", async () => {
+    vi.mocked(saveSettings).mockResolvedValue();
+    vi.mocked(testConnection).mockResolvedValue();
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.change(screen.getByLabelText("API 地址"), {
+      target: { value: "https://api.deepseek.com" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key"), {
+      target: { value: "  current-key  " },
+    });
+    fireEvent.change(screen.getByLabelText("模型名称"), {
+      target: { value: "deepseek-v4-flash" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "保存并测试" }));
+
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({
+          apiBase: "https://api.deepseek.com",
+          apiKey: "current-key",
+          model: "deepseek-v4-flash",
+        }),
+      ),
+    );
+    expect(testConnection).toHaveBeenCalledTimes(1);
+    expect(saveSettings).toHaveBeenCalledBefore(vi.mocked(testConnection));
+    expect(await screen.findByRole("status")).toHaveTextContent("连接成功");
+  });
+
+  it("explains that an empty API key keeps the saved credential", async () => {
+    render(<SettingsPanel />);
+
+    await screen.findByLabelText("API 地址");
+
+    expect(screen.getByText("留空表示继续使用已保存的密钥")).toBeVisible();
   });
 
   it("treats a blank replacement key as keep-existing and clears the field after save", async () => {
@@ -65,7 +106,7 @@ describe("SettingsPanel", () => {
     fireEvent.change(screen.getByLabelText("API Key"), {
       target: { value: "   " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "保存设置" }));
+    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
 
     await waitFor(() =>
       expect(saveSettings).toHaveBeenCalledWith(

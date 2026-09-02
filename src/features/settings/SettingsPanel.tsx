@@ -19,9 +19,20 @@ const EMPTY_SETTINGS: ApiSettings = {
 
 function publicError(reason: unknown): AppErrorPayload {
   const error = reason as Partial<AppErrorPayload>;
+  const code = error.code ?? "settings_failed";
+  const messages: Record<string, string> = {
+    authentication_failed:
+      "认证失败。请确认 API Key 属于当前 API 地址，重新输入后再点“保存并测试”。",
+    model_not_found: "找不到这个模型，请检查模型名称后重试。",
+    rate_limited: "请求过于频繁，请稍后再试。",
+    request_timeout: "连接超时，请检查网络或 API 地址后重试。",
+    provider_unavailable: "模型服务暂时不可用，请稍后再试。",
+    credentialStoreUnavailable: "无法读取或保存 API Key，请检查系统凭据服务。",
+    settingsRollbackFailed: "设置保存失败，并且无法恢复之前的设置。",
+  };
   return {
-    code: error.code ?? "settings_failed",
-    message: error.message ?? "设置操作失败。",
+    code,
+    message: messages[code] ?? "设置操作失败，请检查填写内容后重试。",
   };
 }
 
@@ -58,17 +69,8 @@ export function SettingsPanel() {
     event.preventDefault();
     setError(null);
     setNotice(null);
-    const replacementKey = apiKey.trim();
-    const payload: SaveSettings = {
-      apiBase: settings.apiBase,
-      apiKey: replacementKey ? replacementKey : null,
-      model: settings.model,
-      webMode: settings.webMode,
-      alwaysOnTop: settings.alwaysOnTop,
-      autostart: settings.autostart,
-    };
     try {
-      await saveSettings(payload);
+      await saveSettings(currentPayload());
       setApiKey("");
       setNotice("设置已保存");
     } catch (reason) {
@@ -76,12 +78,26 @@ export function SettingsPanel() {
     }
   }
 
-  async function test() {
+  function currentPayload(): SaveSettings {
+    const replacementKey = apiKey.trim();
+    return {
+      apiBase: settings.apiBase.trim(),
+      apiKey: replacementKey ? replacementKey : null,
+      model: settings.model.trim(),
+      webMode: settings.webMode,
+      alwaysOnTop: settings.alwaysOnTop,
+      autostart: settings.autostart,
+    };
+  }
+
+  async function saveAndTest() {
     setError(null);
     setNotice(null);
     try {
+      await saveSettings(currentPayload());
       await testConnection();
-      setNotice("连接成功");
+      setApiKey("");
+      setNotice("设置已保存，连接成功");
     } catch (reason) {
       setError(publicError(reason));
     }
@@ -102,34 +118,103 @@ export function SettingsPanel() {
 
   return (
     <main className="panel settings-panel" aria-label="AIbb 设置">
-      <form onSubmit={save}>
-        <label>API 地址<input value={settings.apiBase} onChange={(event) => setSettings({ ...settings, apiBase: event.target.value })} /></label>
-        <label>API Key<input type="password" autoComplete="new-password" value={apiKey} onChange={(event) => setApiKey(event.target.value)} /></label>
-        <label>模型名称<input value={settings.model} onChange={(event) => setSettings({ ...settings, model: event.target.value })} /></label>
-        <label>
-          联网模式
-          <select value={settings.webMode} onChange={(event) => setSettings({ ...settings, webMode: event.target.value as WebMode })}>
-            <option value="auto">自动探测</option>
-            <option value="force">强制原生联网</option>
-            <option value="off">关闭原生联网</option>
-          </select>
+      <header className="settings-header">
+        <span className="settings-mark" aria-hidden="true">◎</span>
+        <div>
+          <h1>AIbb 设置</h1>
+          <p>配置一个大模型，AIbb 就可以出去玩啦。</p>
+        </div>
+      </header>
+
+      <form className="settings-form" onSubmit={save}>
+        <label className="field">
+          <span>API 地址</span>
+          <input
+            type="url"
+            value={settings.apiBase}
+            onChange={(event) => setSettings({ ...settings, apiBase: event.target.value })}
+            placeholder="https://api.deepseek.com"
+          />
         </label>
-        <label><input type="checkbox" checked={settings.alwaysOnTop} onChange={(event) => setSettings({ ...settings, alwaysOnTop: event.target.checked })} />始终置顶</label>
-        <label><input type="checkbox" checked={settings.autostart} onChange={(event) => setSettings({ ...settings, autostart: event.target.checked })} />开机启动</label>
+
+        <div className="field">
+          <label htmlFor="api-key">API Key</label>
+          <input
+            id="api-key"
+            type="password"
+            autoComplete="new-password"
+            value={apiKey}
+            onChange={(event) => setApiKey(event.target.value)}
+            placeholder={settings.apiConfigured ? "已安全保存" : "请输入 API Key"}
+          />
+          <small>留空表示继续使用已保存的密钥</small>
+        </div>
+
+        <div className="settings-grid">
+          <label className="field">
+            <span>模型名称</span>
+            <input
+              value={settings.model}
+              onChange={(event) => setSettings({ ...settings, model: event.target.value })}
+              placeholder="deepseek-v4-flash"
+            />
+          </label>
+          <label className="field">
+            <span>联网模式</span>
+            <select
+              value={settings.webMode}
+              onChange={(event) => setSettings({ ...settings, webMode: event.target.value as WebMode })}
+            >
+              <option value="auto">自动探测</option>
+              <option value="force">强制原生联网</option>
+              <option value="off">关闭原生联网</option>
+            </select>
+          </label>
+        </div>
+
+        <div className="toggle-row">
+          <label className="toggle-option">
+            <input
+              type="checkbox"
+              checked={settings.alwaysOnTop}
+              onChange={(event) => setSettings({ ...settings, alwaysOnTop: event.target.checked })}
+            />
+            <span>始终置顶</span>
+          </label>
+          <label className="toggle-option">
+            <input
+              type="checkbox"
+              checked={settings.autostart}
+              onChange={(event) => setSettings({ ...settings, autostart: event.target.checked })}
+            />
+            <span>开机启动</span>
+          </label>
+        </div>
+
         <div className="button-row">
-          <button type="submit">保存设置</button>
-          <button type="button" onClick={() => void test()}>测试连接</button>
-          <button type="button" onClick={() => setConfirmingClear(true)}>清除记忆</button>
-          <button type="button" onClick={() => void exitApp()}>退出 AIbb</button>
+          <button className="button secondary" type="submit">仅保存</button>
+          <button className="button primary" type="button" onClick={() => void saveAndTest()}>
+            保存并测试
+          </button>
+        </div>
+
+        <div className="secondary-actions">
+          <button className="text-button" type="button" onClick={() => setConfirmingClear(true)}>清除记忆</button>
+          <button className="text-button danger" type="button" onClick={() => void exitApp()}>退出 AIbb</button>
         </div>
       </form>
-      {error && <p role="alert">{error.code}：{error.message}</p>}
-      {notice && <p role="status">{notice}</p>}
+      {error && <p className="feedback error" role="alert">{error.message}</p>}
+      {notice && <p className="feedback success" role="status">{notice}</p>}
       {confirmingClear && (
-        <section role="dialog" aria-label="确认清除记忆" aria-modal="true">
-          <p>这会清除本地对话与探索记忆，保留 API 设置。确定继续吗？</p>
-          <button type="button" onClick={() => void confirmClear()}>确认清除</button>
-          <button type="button" onClick={() => setConfirmingClear(false)}>取消</button>
+        <section className="confirm-dialog" role="dialog" aria-label="确认清除记忆" aria-modal="true">
+          <div className="confirm-card">
+            <h2>清除 AIbb 的记忆？</h2>
+            <p>这会清除本地对话与探索记忆，但保留 API 设置。</p>
+            <div className="button-row">
+              <button className="button danger-button" type="button" onClick={() => void confirmClear()}>确认清除</button>
+              <button className="button secondary" type="button" onClick={() => setConfirmingClear(false)}>取消</button>
+            </div>
+          </div>
         </section>
       )}
     </main>
