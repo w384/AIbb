@@ -79,13 +79,19 @@ export function ExplorationPanel({ taskId }: ExplorationPanelProps) {
 
   return (
     <section className="exploration-panel" aria-label="探索结果">
-      <p data-testid="exploration-progress">{status}</p>
+      <header className="exploration-header">
+        <span aria-hidden="true">✦</span>
+        <div>
+          <h2>AIbb 的出游记录</h2>
+          <p data-testid="exploration-progress">{status}</p>
+        </div>
+      </header>
       {!result && !error && (
-        <button type="button" onClick={() => void cancelExploration(currentTaskId)}>
+        <button className="exploration-secondary-button" type="button" onClick={() => void cancelExploration(currentTaskId)}>
           取消探索
         </button>
       )}
-      {error && <p role="alert">{error.code}：{error.message}</p>}
+      {error && <p className="chat-feedback" role="alert">{error.message}</p>}
       {result && (
         <>
           <ol className="exploration-results">
@@ -95,8 +101,11 @@ export function ExplorationPanel({ taskId }: ExplorationPanelProps) {
               </li>
             ))}
           </ol>
-          <p data-testid="next-outing-request">{result.nextOutingRequest}</p>
-          <button type="button" disabled={allowing} onClick={() => void allowNextOuting()}>
+          <div className="next-outing-card">
+            <span>AIbb 还想去</span>
+            <p data-testid="next-outing-request">{result.nextOutingRequest}</p>
+          </div>
+          <button className="chat-primary-button" type="button" disabled={allowing} onClick={() => void allowNextOuting()}>
             允许出去玩
           </button>
         </>

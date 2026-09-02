@@ -69,6 +69,17 @@ describe("ChatPanel", () => {
     expect(mockSubmit).not.toHaveBeenCalled();
   });
 
+  it("presents a branded chat header with a direct settings action", async () => {
+    render(<ChatPanel />);
+
+    expect(await screen.findByRole("heading", { name: "AIbb" })).toBeVisible();
+    expect(screen.getByText("准备出去玩")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "打开设置" }));
+
+    expect(openSettingsWindow).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("textbox", { name: "消息" })).toBeVisible();
+  });
+
   it("streams only the active request and unregisters every listener on unmount", async () => {
     mockSubmit.mockImplementation(async (_message, id) => ({
       kind: "chatStarted",

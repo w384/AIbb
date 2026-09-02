@@ -149,6 +149,19 @@ mod tests {
     }
 
     #[test]
+    fn pet_window_is_compact_transparent_and_undecorated() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let pet = &config["app"]["windows"][0];
+
+        assert_eq!(pet["label"], serde_json::json!("pet"));
+        assert_eq!(pet["width"], serde_json::json!(88));
+        assert_eq!(pet["height"], serde_json::json!(88));
+        assert_eq!(pet["transparent"], serde_json::json!(true));
+        assert_eq!(pet["decorations"], serde_json::json!(false));
+    }
+
+    #[test]
     fn chat_capability_grants_only_chat_events_and_required_commands() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("capabilities")

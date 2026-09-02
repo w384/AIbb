@@ -1,9 +1,12 @@
 import {
   useEffect,
   useReducer,
+  useRef,
   useState,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { AibbAvatar } from "../../components/AibbAvatar";
 import type {
   ExplorationStatus,
   PetStatus,
@@ -25,12 +28,17 @@ interface PetSurfaceProps {
   status: PetStatus;
 }
 
+const LONG_PRESS_MS = 320;
+
 export function PetSurface({ status }: PetSurfaceProps) {
   const [petState, dispatchPet] = useReducer(petStatusReducer, {
     ...initialPetState,
     status,
   });
   const [chatOpenError, setChatOpenError] = useState<string | null>(null);
+  const longPressTimer = useRef<number | null>(null);
+  const activePointer = useRef<number | null>(null);
+  const suppressNextClick = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -53,16 +61,55 @@ export function PetSurface({ status }: PetSurfaceProps) {
     });
     return () => {
       disposed = true;
+      clearLongPressTimer();
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, []);
 
-  function handleDragPointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
+  function clearLongPressTimer() {
+    if (longPressTimer.current !== null) {
+      window.clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+  }
+
+  function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
     if (!event.isPrimary || event.button !== 0) {
       return;
     }
-    event.preventDefault();
-    void startPetDrag();
+    clearLongPressTimer();
+    suppressNextClick.current = false;
+    activePointer.current = event.pointerId;
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+    longPressTimer.current = window.setTimeout(() => {
+      if (activePointer.current !== event.pointerId) return;
+      longPressTimer.current = null;
+      activePointer.current = null;
+      suppressNextClick.current = true;
+      void startPetDrag();
+    }, LONG_PRESS_MS);
+  }
+
+  function finishPointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (activePointer.current !== event.pointerId) return;
+    activePointer.current = null;
+    clearLongPressTimer();
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
+      event.currentTarget.releasePointerCapture?.(event.pointerId);
+    }
+  }
+
+  function handleClick(event: ReactMouseEvent<HTMLButtonElement>) {
+    if (event.detail === 0) {
+      event.preventDefault();
+      return;
+    }
+    if (suppressNextClick.current) {
+      suppressNextClick.current = false;
+      event.preventDefault();
+      return;
+    }
+    void openChat();
   }
 
   async function openChat() {
@@ -81,31 +128,31 @@ export function PetSurface({ status }: PetSurfaceProps) {
   return (
     <main className="pet-surface" data-status={petState.status}>
       {petState.status === "returned" && (
-        <p className="pet-bubble" role="status">
-          我回来啦，点我看结果！
-        </p>
+        <span className="pet-return-indicator" role="status">
+          <span className="sr-only">我回来啦，点我看结果！</span>
+        </span>
       )}
       {chatOpenError && <p className="pet-error" role="alert">{chatOpenError}</p>}
       <button
-        aria-label="移动 AIbb"
-        className="pet-drag-handle"
-        title="按住这里移动 AIbb"
-        type="button"
-        onPointerDown={handleDragPointerDown}
-      >
-        <span aria-hidden="true">•••</span>
-      </button>
-      <button
         aria-label="AIbb"
         className="pet"
+        tabIndex={-1}
+        title="短按对话，长按拖动，右键设置"
         type="button"
-        onClick={() => void openChat()}
+        onClick={handleClick}
         onContextMenu={(event) => {
           event.preventDefault();
           void openSettingsWindow();
         }}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") event.preventDefault();
+        }}
+        onLostPointerCapture={finishPointer}
+        onPointerCancel={finishPointer}
+        onPointerDown={handlePointerDown}
+        onPointerUp={finishPointer}
       >
-        <span aria-hidden="true">🤖</span>
+        <AibbAvatar />
       </button>
     </main>
   );

@@ -1,5 +1,5 @@
 import { act, fireEvent, render, waitFor, within } from "@testing-library/react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PetSurface } from "./PetSurface";
 import {
   openSettingsWindow,
@@ -48,11 +48,15 @@ describe("PetSurface", () => {
     vi.clearAllMocks();
   });
 
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
   it("uses left click for chat and right click for settings", () => {
     const view = render(<PetSurface status="idle" />);
     const pet = within(view.container).getByRole("button", { name: "AIbb" });
 
-    fireEvent.click(pet);
+    fireEvent.click(pet, { detail: 1 });
     expect(mockToggleChat).toHaveBeenCalledTimes(1);
 
     expect(fireEvent.contextMenu(pet)).toBe(false);
@@ -64,7 +68,9 @@ describe("PetSurface", () => {
     mockToggleChat.mockRejectedValueOnce(new Error("native detail must not reach the pet"));
     const view = render(<PetSurface status="idle" />);
 
-    fireEvent.click(within(view.container).getByRole("button", { name: "AIbb" }));
+    fireEvent.click(within(view.container).getByRole("button", { name: "AIbb" }), {
+      detail: 1,
+    });
 
     expect(await within(view.container).findByRole("alert")).toHaveTextContent(
       "暂时没能打开对话，请再点一次试试。",
@@ -112,7 +118,9 @@ describe("PetSurface", () => {
     );
     expect(view.container.firstChild).toHaveAttribute("data-status", "returned");
 
-    fireEvent.click(within(view.container).getByRole("button", { name: "AIbb" }));
+    fireEvent.click(within(view.container).getByRole("button", { name: "AIbb" }), {
+      detail: 1,
+    });
     await waitFor(() =>
       expect(view.container.firstChild).toHaveAttribute("data-status", "idle"),
     );
@@ -128,7 +136,8 @@ describe("PetSurface", () => {
     expect(listenExplorationError).toHaveBeenCalled();
   });
 
-  it("keeps the pet body dedicated to chat even when the pointer moves", () => {
+  it("opens chat after a short primary press without starting a drag", () => {
+    vi.useFakeTimers();
     const view = render(<PetSurface status="idle" />);
     const pet = within(view.container).getByRole("button", { name: "AIbb" });
 
@@ -140,38 +149,37 @@ describe("PetSurface", () => {
       isPrimary: true,
       pointerId: 1,
     });
-    fireEvent.pointerMove(pet, {
-      buttons: 1,
-      clientX: 15,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 1,
-    });
+    act(() => vi.advanceTimersByTime(200));
     fireEvent.pointerUp(pet, { clientX: 15, clientY: 10, pointerId: 1 });
-    fireEvent.click(pet);
+    fireEvent.click(pet, { detail: 1 });
 
     expect(mockStartPetDrag).not.toHaveBeenCalled();
     expect(mockToggleChat).toHaveBeenCalledTimes(1);
   });
 
-  it("starts native window movement only from the dedicated drag handle", () => {
+  it("starts dragging only after a long primary press and suppresses its click", () => {
+    vi.useFakeTimers();
     const view = render(<PetSurface status="idle" />);
-    const dragHandle = within(view.container).getByRole("button", {
-      name: "移动 AIbb",
-    });
+    const pet = within(view.container).getByRole("button", { name: "AIbb" });
 
-    fireEvent.pointerDown(dragHandle, {
+    fireEvent.pointerDown(pet, {
       button: 0,
       buttons: 1,
       isPrimary: true,
       pointerId: 7,
     });
 
+    act(() => vi.advanceTimersByTime(319));
+    expect(mockStartPetDrag).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
     expect(mockStartPetDrag).toHaveBeenCalledTimes(1);
+    fireEvent.pointerUp(pet, { pointerId: 7 });
+    fireEvent.click(pet, { detail: 1 });
     expect(mockToggleChat).not.toHaveBeenCalled();
   });
 
-  it("does not drag from right-button movement", () => {
+  it("keeps right click dedicated to settings without starting a drag", () => {
+    vi.useFakeTimers();
     const view = render(<PetSurface status="idle" />);
     const pet = within(view.container).getByRole("button", { name: "AIbb" });
 
@@ -183,18 +191,15 @@ describe("PetSurface", () => {
       isPrimary: true,
       pointerId: 2,
     });
-    fireEvent.pointerMove(pet, {
-      buttons: 2,
-      clientX: 20,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 2,
-    });
+    fireEvent.contextMenu(pet);
+    act(() => vi.advanceTimersByTime(500));
 
     expect(mockStartPetDrag).not.toHaveBeenCalled();
+    expect(mockOpenSettings).toHaveBeenCalledTimes(1);
   });
 
-  it("does not drag after the pointer is cancelled", () => {
+  it("cancels a pending long press when the pointer is cancelled", () => {
+    vi.useFakeTimers();
     const view = render(<PetSurface status="idle" />);
     const pet = within(view.container).getByRole("button", { name: "AIbb" });
 
@@ -207,61 +212,20 @@ describe("PetSurface", () => {
       pointerId: 3,
     });
     fireEvent.pointerCancel(pet, { pointerId: 3 });
-    fireEvent.pointerMove(pet, {
-      buttons: 1,
-      clientX: 20,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 3,
-    });
+    act(() => vi.advanceTimersByTime(500));
 
     expect(mockStartPetDrag).not.toHaveBeenCalled();
   });
 
-  it("does not drag after pointer capture is lost", () => {
+  it("does not expose the removed drag handle or keyboard activation", () => {
     const view = render(<PetSurface status="idle" />);
     const pet = within(view.container).getByRole("button", { name: "AIbb" });
 
-    fireEvent.pointerDown(pet, {
-      button: 0,
-      buttons: 1,
-      clientX: 10,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 4,
-    });
-    fireEvent.lostPointerCapture(pet, { pointerId: 4 });
-    fireEvent.pointerMove(pet, {
-      buttons: 1,
-      clientX: 20,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 4,
-    });
+    expect(
+      within(view.container).queryByRole("button", { name: "移动 AIbb" }),
+    ).not.toBeInTheDocument();
+    fireEvent.click(pet, { detail: 0 });
 
-    expect(mockStartPetDrag).not.toHaveBeenCalled();
-  });
-
-  it("does not drag when the primary button is no longer pressed", () => {
-    const view = render(<PetSurface status="idle" />);
-    const pet = within(view.container).getByRole("button", { name: "AIbb" });
-
-    fireEvent.pointerDown(pet, {
-      button: 0,
-      buttons: 1,
-      clientX: 10,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 5,
-    });
-    fireEvent.pointerMove(pet, {
-      buttons: 0,
-      clientX: 20,
-      clientY: 10,
-      isPrimary: true,
-      pointerId: 5,
-    });
-
-    expect(mockStartPetDrag).not.toHaveBeenCalled();
+    expect(mockToggleChat).not.toHaveBeenCalled();
   });
 });
