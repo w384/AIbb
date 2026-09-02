@@ -47,7 +47,7 @@ describe("ExplorationPanel", () => {
     act(() => progressListener({ taskId: "other", status: "writing" }));
     expect(screen.queryByText("writing")).not.toBeInTheDocument();
     act(() => progressListener({ taskId: "task-1", status: "reading" }));
-    expect(screen.getByTestId("exploration-progress")).toHaveTextContent("reading");
+    expect(screen.getByTestId("exploration-progress")).toHaveTextContent("正在阅读");
 
     fireEvent.click(screen.getByRole("button", { name: "取消探索" }));
     expect(cancelExploration).toHaveBeenCalledWith("task-1");
@@ -55,7 +55,7 @@ describe("ExplorationPanel", () => {
     act(() =>
       errorListener({ taskId: "task-1", code: "cancelled", message: "cancelled" }),
     );
-    expect(screen.getByRole("alert")).toHaveTextContent("cancelled");
+    expect(screen.getByRole("alert")).toHaveTextContent("探索已取消");
 
     view.unmount();
     await waitFor(() =>
@@ -93,7 +93,7 @@ describe("ExplorationPanel", () => {
     act(() => progressListener({ taskId: "task-1", status: "writing" }));
     expect(screen.queryByText("writing")).not.toBeInTheDocument();
     act(() => progressListener({ taskId: "task-2", status: "reading" }));
-    expect(screen.getByTestId("exploration-progress")).toHaveTextContent("reading");
+    expect(screen.getByTestId("exploration-progress")).toHaveTextContent("正在阅读");
     fireEvent.click(screen.getByRole("button", { name: "取消探索" }));
     expect(cancelExploration).toHaveBeenLastCalledWith("task-2");
     expect(listenExplorationError).toHaveBeenCalledTimes(2);
@@ -111,7 +111,40 @@ describe("ExplorationPanel", () => {
       }),
     );
 
+    expect(screen.getByTestId("exploration-progress")).toHaveTextContent("失败");
     expect(screen.getByRole("alert")).toHaveTextContent("模型名称");
     expect(screen.getByRole("alert")).not.toHaveTextContent("model provider");
+  });
+
+  it.each([
+    ["invalid_response", "模型返回的内容无法识别"],
+    ["format_incomplete", "四个探索结果"],
+    ["native_web_unsupported", "不支持原生联网"],
+  ])("localizes %s without exposing backend text", async (code, expected) => {
+    render(<ExplorationPanel taskId="task-1" />);
+    await waitFor(() => expect(listenExplorationError).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      errorListener({ taskId: "task-1", code, message: "provider internal detail" }),
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent(expected);
+    expect(screen.getByRole("alert")).not.toHaveTextContent("provider internal");
+  });
+
+  it("uses a fixed safe Chinese fallback for unknown exploration errors", async () => {
+    render(<ExplorationPanel taskId="task-1" />);
+    await waitFor(() => expect(listenExplorationError).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      errorListener({
+        taskId: "task-1",
+        code: "unexpected_provider_error",
+        message: "Authorization: Bearer sk-must-not-render",
+      }),
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("探索暂时失败");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("sk-must-not-render");
   });
 });

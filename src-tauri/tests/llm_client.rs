@@ -513,6 +513,38 @@ async fn test_connection_falls_back_to_one_token_chat_when_models_is_unsupported
 }
 
 #[tokio::test]
+async fn test_connection_accepts_a_truncated_thinking_response_without_final_text() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": "configured-model"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{
+                "finish_reason": "length",
+                "message": {
+                    "content": null,
+                    "reasoning_content": "正在思考"
+                }
+            }]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .test_connection(CancellationToken::new())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn test_connection_rejects_an_invalid_fallback_success_body() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))

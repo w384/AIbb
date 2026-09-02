@@ -196,8 +196,7 @@ impl OpenAiClient {
             .send_with_header_timeout(request, cancellation, api_key)
             .await?;
         let body = self.checked_body(response, api_key, true).await?;
-        parse_chat_completion(&body)?;
-        Ok(())
+        parse_connection_response(&body)
     }
 }
 
@@ -405,6 +404,15 @@ fn parse_chat_completion(body: &str) -> Result<String, AppError> {
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .ok_or_else(|| invalid_response("missing chat completion content"))
+}
+
+fn parse_connection_response(body: &str) -> Result<(), AppError> {
+    let value: Value = serde_json::from_str(body).map_err(invalid_response)?;
+    value
+        .pointer("/choices/0/message")
+        .and_then(Value::as_object)
+        .map(|_| ())
+        .ok_or_else(|| invalid_response("missing chat completion message"))
 }
 
 fn parse_models_response(body: &str, configured_model: &str) -> Result<(), AppError> {
