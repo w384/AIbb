@@ -47,6 +47,49 @@ CREATE TABLE explorations (
 );
 "#;
 
+const DEEPSEEK_MODEL_BACKFILL: &str = r#"
+UPDATE app_settings
+SET model = 'deepseek-v4-flash'
+WHERE TRIM(model) = ''
+  AND LOWER(TRIM(api_base)) IN (
+    'https://api.deepseek.com',
+    'https://api.deepseek.com/',
+    'https://api.deepseek.com/v1',
+    'https://api.deepseek.com/v1/'
+  );
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
-    Migrations::new(vec![M::up(INITIAL_SCHEMA)]).to_latest(connection)
+    Migrations::new(vec![M::up(INITIAL_SCHEMA), M::up(DEEPSEEK_MODEL_BACKFILL)])
+        .to_latest(connection)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn upgrades_a_blank_deepseek_model_to_the_real_default() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        Migrations::new(vec![M::up(INITIAL_SCHEMA)])
+            .to_latest(&mut connection)
+            .unwrap();
+        connection
+            .execute(
+                "UPDATE app_settings SET api_base = ?1, model = '' WHERE singleton = 1",
+                ["https://api.deepseek.com"],
+            )
+            .unwrap();
+
+        apply(&mut connection).unwrap();
+
+        let model: String = connection
+            .query_row(
+                "SELECT model FROM app_settings WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(model, "deepseek-v4-flash");
+    }
 }

@@ -45,6 +45,29 @@ describe("SettingsPanel", () => {
     expect(screen.getByLabelText("开机启动")).not.toBeChecked();
   });
 
+  it("turns a blank DeepSeek model hint into the actual saved default", async () => {
+    vi.mocked(loadSettings).mockResolvedValue({
+      apiBase: "https://api.deepseek.com",
+      model: "",
+      webMode: "auto",
+      alwaysOnTop: true,
+      autostart: false,
+      apiConfigured: true,
+    });
+    render(<SettingsPanel />);
+
+    const model = await screen.findByLabelText("模型名称");
+    expect(model).toHaveValue("deepseek-v4-flash");
+    expect(model).toBeRequired();
+    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
+
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ model: "deepseek-v4-flash" }),
+      ),
+    );
+  });
+
   it("shows a Chinese authentication error without provider internals", async () => {
     vi.mocked(saveSettings).mockResolvedValue();
     vi.mocked(testConnection).mockRejectedValue({

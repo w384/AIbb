@@ -44,11 +44,11 @@ body,
 .pet-return-indicator {
   position: absolute;
   z-index: 2;
-  top: 8px;
-  right: 8px;
-  width: 14px;
-  height: 14px;
-  border: 3px solid #fff;
+  top: 1px;
+  right: 1px;
+  width: 10px;
+  height: 10px;
+  border: 2px solid #fff;
   border-radius: 50%;
   background: #ff5f8f;
   box-shadow: 0 3px 8px rgb(192 43 92 / 28%);
@@ -64,10 +64,10 @@ body,
 }
 
 .pet {
-  width: 68px;
-  height: 68px;
-  padding: 3px;
-  border: 3px solid rgb(139 145 156 / 40%);
+  width: 40px;
+  height: 40px;
+  padding: 2px;
+  border: 2px solid rgb(139 145 156 / 40%);
   border-radius: 50%;
   background: rgb(255 255 255 / 86%);
   box-shadow: 0 5px 14px rgb(35 52 85 / 17%);

@@ -15,10 +15,11 @@
         "label": "pet",
         "title": "AIbb",
         "url": "index.html?window=pet",
-        "width": 88,
-        "height": 88,
+        "width": 48,
+        "height": 48,
         "transparent": true,
         "decorations": false,
+        "shadow": false,
         "resizable": false,
         "skipTaskbar": true,
         "alwaysOnTop": true

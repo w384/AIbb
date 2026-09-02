@@ -80,6 +80,25 @@ describe("ChatPanel", () => {
     expect(screen.getByRole("textbox", { name: "消息" })).toBeVisible();
   });
 
+  it("sends with Enter while Shift+Enter and composing Enter remain in the editor", async () => {
+    mockSubmit.mockImplementation(async (_message, id) => ({
+      kind: "chatStarted",
+      requestId: id,
+    }));
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+
+    fireEvent.change(editor, { target: { value: "第一行" } });
+    expect(fireEvent.keyDown(editor, { key: "Enter", shiftKey: true })).toBe(true);
+    expect(fireEvent.keyDown(editor, { key: "Enter", isComposing: true })).toBe(true);
+    expect(mockSubmit).not.toHaveBeenCalled();
+
+    expect(fireEvent.keyDown(editor, { key: "Enter" })).toBe(false);
+    await waitFor(() =>
+      expect(mockSubmit).toHaveBeenCalledWith("第一行", expect.any(String)),
+    );
+  });
+
   it("streams only the active request and unregisters every listener on unmount", async () => {
     mockSubmit.mockImplementation(async (_message, id) => ({
       kind: "chatStarted",

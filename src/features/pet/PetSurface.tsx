@@ -28,7 +28,14 @@ interface PetSurfaceProps {
   status: PetStatus;
 }
 
-const LONG_PRESS_MS = 320;
+const LONG_PRESS_MS = 100;
+const DRAG_DISTANCE_PX = 3;
+
+interface PressOrigin {
+  pointerId: number;
+  x: number;
+  y: number;
+}
 
 export function PetSurface({ status }: PetSurfaceProps) {
   const [petState, dispatchPet] = useReducer(petStatusReducer, {
@@ -38,6 +45,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
   const [chatOpenError, setChatOpenError] = useState<string | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const activePointer = useRef<number | null>(null);
+  const pressOrigin = useRef<PressOrigin | null>(null);
   const suppressNextClick = useRef(false);
 
   useEffect(() => {
@@ -80,19 +88,48 @@ export function PetSurface({ status }: PetSurfaceProps) {
     clearLongPressTimer();
     suppressNextClick.current = false;
     activePointer.current = event.pointerId;
+    pressOrigin.current = {
+      pointerId: event.pointerId,
+      x: event.clientX,
+      y: event.clientY,
+    };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     longPressTimer.current = window.setTimeout(() => {
-      if (activePointer.current !== event.pointerId) return;
-      longPressTimer.current = null;
-      activePointer.current = null;
-      suppressNextClick.current = true;
-      void startPetDrag();
+      beginDrag(event.pointerId);
     }, LONG_PRESS_MS);
+  }
+
+  function handlePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    const origin = pressOrigin.current;
+    if (
+      !origin ||
+      origin.pointerId !== event.pointerId ||
+      activePointer.current !== event.pointerId ||
+      (event.buttons & 1) === 0
+    ) {
+      return;
+    }
+    if (
+      Math.hypot(event.clientX - origin.x, event.clientY - origin.y) >=
+      DRAG_DISTANCE_PX
+    ) {
+      beginDrag(event.pointerId);
+    }
+  }
+
+  function beginDrag(pointerId: number) {
+    if (activePointer.current !== pointerId) return;
+    clearLongPressTimer();
+    activePointer.current = null;
+    pressOrigin.current = null;
+    suppressNextClick.current = true;
+    void startPetDrag();
   }
 
   function finishPointer(event: ReactPointerEvent<HTMLButtonElement>) {
     if (activePointer.current !== event.pointerId) return;
     activePointer.current = null;
+    pressOrigin.current = null;
     clearLongPressTimer();
     if (event.currentTarget.hasPointerCapture?.(event.pointerId)) {
       event.currentTarget.releasePointerCapture?.(event.pointerId);
@@ -150,6 +187,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
         onLostPointerCapture={finishPointer}
         onPointerCancel={finishPointer}
         onPointerDown={handlePointerDown}
+        onPointerMove={handlePointerMove}
         onPointerUp={finishPointer}
       >
         <AibbAvatar />

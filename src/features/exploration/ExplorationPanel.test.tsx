@@ -98,4 +98,20 @@ describe("ExplorationPanel", () => {
     expect(cancelExploration).toHaveBeenLastCalledWith("task-2");
     expect(listenExplorationError).toHaveBeenCalledTimes(2);
   });
+
+  it("turns provider request failures into an actionable Chinese message", async () => {
+    render(<ExplorationPanel taskId="task-1" />);
+    await waitFor(() => expect(listenExplorationError).toHaveBeenCalledTimes(1));
+
+    act(() =>
+      errorListener({
+        taskId: "task-1",
+        code: "invalid_request",
+        message: "The model provider rejected the request.",
+      }),
+    );
+
+    expect(screen.getByRole("alert")).toHaveTextContent("模型名称");
+    expect(screen.getByRole("alert")).not.toHaveTextContent("model provider");
+  });
 });

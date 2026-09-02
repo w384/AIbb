@@ -334,7 +334,8 @@ impl LlmTransport for OpenAiClient {
             })?;
 
             if status.is_success() {
-                return parse_models_response(&body);
+                parse_models_response(&body, &self.settings.model)?;
+                return self.connection_fallback(&api_key, &cancellation).await;
             }
             if is_unsupported(status, &body) {
                 return self.connection_fallback(&api_key, &cancellation).await;
@@ -406,13 +407,20 @@ fn parse_chat_completion(body: &str) -> Result<String, AppError> {
         .ok_or_else(|| invalid_response("missing chat completion content"))
 }
 
-fn parse_models_response(body: &str) -> Result<(), AppError> {
+fn parse_models_response(body: &str, configured_model: &str) -> Result<(), AppError> {
     let value: Value = serde_json::from_str(body).map_err(invalid_response)?;
-    value
+    let models = value
         .get("data")
         .and_then(Value::as_array)
-        .map(|_| ())
-        .ok_or_else(|| invalid_response("missing models data array"))
+        .ok_or_else(|| invalid_response("missing models data array"))?;
+    if models
+        .iter()
+        .any(|model| model.get("id").and_then(Value::as_str) == Some(configured_model))
+    {
+        Ok(())
+    } else {
+        Err(AppError::from_code(ErrorCode::ModelNotFound))
+    }
 }
 
 fn parse_response_text(body: &str) -> Result<String, AppError> {

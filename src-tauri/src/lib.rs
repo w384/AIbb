@@ -155,10 +155,11 @@ mod tests {
         let pet = &config["app"]["windows"][0];
 
         assert_eq!(pet["label"], serde_json::json!("pet"));
-        assert_eq!(pet["width"], serde_json::json!(88));
-        assert_eq!(pet["height"], serde_json::json!(88));
+        assert_eq!(pet["width"], serde_json::json!(48));
+        assert_eq!(pet["height"], serde_json::json!(48));
         assert_eq!(pet["transparent"], serde_json::json!(true));
         assert_eq!(pet["decorations"], serde_json::json!(false));
+        assert_eq!(pet["shadow"], serde_json::json!(false));
     }
 
     #[test]

@@ -149,7 +149,7 @@ describe("PetSurface", () => {
       isPrimary: true,
       pointerId: 1,
     });
-    act(() => vi.advanceTimersByTime(200));
+    act(() => vi.advanceTimersByTime(80));
     fireEvent.pointerUp(pet, { clientX: 15, clientY: 10, pointerId: 1 });
     fireEvent.click(pet, { detail: 1 });
 
@@ -169,11 +169,37 @@ describe("PetSurface", () => {
       pointerId: 7,
     });
 
-    act(() => vi.advanceTimersByTime(319));
+    act(() => vi.advanceTimersByTime(99));
     expect(mockStartPetDrag).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(1));
     expect(mockStartPetDrag).toHaveBeenCalledTimes(1);
     fireEvent.pointerUp(pet, { pointerId: 7 });
+    fireEvent.click(pet, { detail: 1 });
+    expect(mockToggleChat).not.toHaveBeenCalled();
+  });
+
+  it("starts dragging immediately when a held pointer begins to move", () => {
+    vi.useFakeTimers();
+    const view = render(<PetSurface status="idle" />);
+    const pet = within(view.container).getByRole("button", { name: "AIbb" });
+
+    fireEvent.pointerDown(pet, {
+      button: 0,
+      buttons: 1,
+      clientX: 10,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 8,
+    });
+    fireEvent.pointerMove(pet, {
+      buttons: 1,
+      clientX: 13,
+      clientY: 10,
+      isPrimary: true,
+      pointerId: 8,
+    });
+
+    expect(mockStartPetDrag).toHaveBeenCalledTimes(1);
     fireEvent.click(pet, { detail: 1 });
     expect(mockToggleChat).not.toHaveBeenCalled();
   });

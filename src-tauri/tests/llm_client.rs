@@ -406,12 +406,46 @@ fn sanitized_http_error_never_serializes_provider_details_or_bearer_secret() {
 }
 
 #[tokio::test]
-async fn test_connection_uses_models_without_chat_fallback_on_success() {
+async fn test_connection_verifies_the_configured_model_after_models_succeeds() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/models"))
         .and(header("authorization", format!("Bearer {SECRET}")))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": []})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": "configured-model"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .and(body_json(json!({
+            "model": "configured-model",
+            "messages": [{"role": "user", "content": "回复 OK"}],
+            "stream": false,
+            "max_tokens": 1
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"content": "OK"}}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .test_connection(CancellationToken::new())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_connection_rejects_a_model_missing_from_the_provider_catalog() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": "other-model"}]
+        })))
         .expect(1)
         .mount(&server)
         .await;
@@ -422,10 +456,12 @@ async fn test_connection_uses_models_without_chat_fallback_on_success() {
         .mount(&server)
         .await;
 
-    client_for(&server)
+    let error = client_for(&server)
         .test_connection(CancellationToken::new())
         .await
-        .unwrap();
+        .unwrap_err();
+
+    assert_eq!(error.code, ErrorCode::ModelNotFound.as_str());
 }
 
 #[tokio::test]
@@ -671,7 +707,17 @@ async fn settings_marks_connection_verified_after_valid_models_response() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"data": []})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": "configured-model"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"content": "OK"}}]
+        })))
         .expect(1)
         .mount(&server)
         .await;

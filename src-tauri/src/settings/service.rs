@@ -84,6 +84,7 @@ impl SettingsService {
         let _operation = self.operation.lock().await;
         let persisted = self.database.load_settings()?;
         let web_mode = parse_web_mode(&persisted)?;
+        validate_required_settings(&persisted.api_base, &persisted.model)?;
         let api_key = self
             .credentials
             .get()
@@ -106,11 +107,14 @@ impl SettingsService {
 
     pub async fn save(&self, settings: SaveSettings) -> Result<(), AppError> {
         let _operation = self.operation.lock().await;
+        let api_base = settings.api_base.trim().to_string();
+        let model = settings.model.trim().to_string();
+        validate_required_settings(&api_base, &model)?;
         let replacement_key = settings.api_key.and_then(normalize_replacement_key);
         let previous = self.database.load_settings()?;
         self.database.save_settings(
-            &settings.api_base,
-            &settings.model,
+            &api_base,
+            &model,
             settings.web_mode.as_storage_value(),
             settings.always_on_top,
             settings.autostart,
@@ -150,6 +154,7 @@ impl SettingsService {
         let _operation = self.operation.lock().await;
         let persisted = self.database.load_settings()?;
         let web_mode = parse_web_mode(&persisted)?;
+        validate_required_settings(&persisted.api_base, &persisted.model)?;
         let settings = ApiSettings {
             api_base: persisted.api_base,
             model: persisted.model,
@@ -198,6 +203,16 @@ impl SettingsService {
 fn normalize_replacement_key(api_key: String) -> Option<String> {
     let api_key = api_key.trim();
     (!api_key.is_empty()).then(|| api_key.to_string())
+}
+
+fn validate_required_settings(api_base: &str, model: &str) -> Result<(), AppError> {
+    if api_base.trim().is_empty() || model.trim().is_empty() {
+        return Err(AppError::new(
+            "invalidSettings",
+            "API address and model name are required.",
+        ));
+    }
+    Ok(())
 }
 
 fn parse_web_mode(settings: &PersistedSettings) -> Result<WebMode, AppError> {

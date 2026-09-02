@@ -17,6 +17,19 @@ const EMPTY_SETTINGS: ApiSettings = {
   apiConfigured: false,
 };
 
+const DEEPSEEK_MODEL = "deepseek-v4-flash";
+
+function withProviderDefaults(settings: ApiSettings): ApiSettings {
+  const base = settings.apiBase.trim().toLowerCase().replace(/\/+$/, "");
+  const isDeepSeek =
+    base === "https://api.deepseek.com" ||
+    base === "https://api.deepseek.com/v1";
+  if (isDeepSeek && !settings.model.trim()) {
+    return { ...settings, model: DEEPSEEK_MODEL };
+  }
+  return settings;
+}
+
 function publicError(reason: unknown): AppErrorPayload {
   const error = reason as Partial<AppErrorPayload>;
   const code = error.code ?? "settings_failed";
@@ -27,6 +40,8 @@ function publicError(reason: unknown): AppErrorPayload {
     rate_limited: "请求过于频繁，请稍后再试。",
     request_timeout: "连接超时，请检查网络或 API 地址后重试。",
     provider_unavailable: "模型服务暂时不可用，请稍后再试。",
+    invalidSettings: "API 地址和模型名称不能为空，请填写后重试。",
+    invalid_request: "请求被模型服务拒绝，请检查 API 地址和模型名称。",
     credentialStoreUnavailable: "无法读取或保存 API Key，请检查系统凭据服务。",
     settingsRollbackFailed: "设置保存失败，并且无法恢复之前的设置。",
   };
@@ -50,7 +65,7 @@ export function SettingsPanel() {
     void loadSettings()
       .then((loadedSettings) => {
         if (!disposed) {
-          setSettings(loadedSettings);
+          setSettings(withProviderDefaults(loadedSettings));
           setApiKey("");
           setLoaded(true);
         }
@@ -180,6 +195,7 @@ export function SettingsPanel() {
             <span>模型名称</span>
             <input
               disabled={settingsInFlight}
+              required
               value={settings.model}
               onChange={(event) => setSettings({ ...settings, model: event.target.value })}
               placeholder="deepseek-v4-flash"

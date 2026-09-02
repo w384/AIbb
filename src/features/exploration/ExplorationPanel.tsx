@@ -16,6 +16,19 @@ interface ExplorationPanelProps {
   taskId: string;
 }
 
+function publicExplorationError(error: AppErrorPayload): string {
+  const messages: Record<string, string> = {
+    invalidSettings: "请打开设置，填写并保存 API 地址和模型名称后重试。",
+    invalid_request: "请求被模型服务拒绝，请打开设置确认模型名称已经保存。",
+    model_not_found: "找不到当前模型，请打开设置检查模型名称。",
+    authentication_failed: "API Key 认证失败，请打开设置重新检查。",
+    rate_limited: "请求过于频繁，请稍后再让 AIbb 出去玩。",
+    request_timeout: "探索请求超时，请稍后重试。",
+    provider_unavailable: "模型服务暂时不可用，请稍后重试。",
+  };
+  return messages[error.code] ?? error.message;
+}
+
 export function ExplorationPanel({ taskId }: ExplorationPanelProps) {
   const [currentTaskId, setCurrentTaskId] = useState(taskId);
   const [status, setStatus] = useState<ExplorationStatus>("queued");
@@ -91,7 +104,7 @@ export function ExplorationPanel({ taskId }: ExplorationPanelProps) {
           取消探索
         </button>
       )}
-      {error && <p className="chat-feedback" role="alert">{error.message}</p>}
+      {error && <p className="chat-feedback" role="alert">{publicExplorationError(error)}</p>}
       {result && (
         <>
           <ol className="exploration-results">

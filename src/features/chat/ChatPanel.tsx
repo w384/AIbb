@@ -1,4 +1,10 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+  type KeyboardEvent as ReactKeyboardEvent,
+} from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
 import type { AppErrorPayload, BootstrapState } from "../../contracts";
 import {
@@ -122,8 +128,7 @@ export function ChatPanel() {
     };
   }, []);
 
-  async function submit(event: FormEvent) {
-    event.preventDefault();
+  async function sendCurrentInput() {
     const message = input.trim();
     if (!message || activeRequest.current) return;
     const id = requestId();
@@ -148,6 +153,23 @@ export function ChatPanel() {
       setActiveRequestId(null);
       setError(publicError(reason));
     }
+  }
+
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void sendCurrentInput();
+  }
+
+  function handleEditorKeyDown(event: ReactKeyboardEvent<HTMLTextAreaElement>) {
+    if (
+      event.key !== "Enter" ||
+      event.shiftKey ||
+      event.nativeEvent.isComposing
+    ) {
+      return;
+    }
+    event.preventDefault();
+    void sendCurrentInput();
   }
 
   if (!bootstrap && !error) {
@@ -217,6 +239,7 @@ export function ChatPanel() {
             rows={1}
             value={input}
             onChange={(event) => setInput(event.target.value)}
+            onKeyDown={handleEditorKeyDown}
           />
         </label>
         <button className="send-button" type="submit" disabled={Boolean(activeRequestId) || !input.trim()}>

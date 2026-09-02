@@ -206,6 +206,27 @@ async fn saves_key_outside_sqlite_and_never_returns_it() {
 }
 
 #[tokio::test]
+async fn rejects_a_blank_model_before_persisting_settings() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new(db.handle(), FakeCredentialStore::default());
+
+    let error = service
+        .save(SaveSettings {
+            api_base: "https://api.deepseek.com".into(),
+            model: "   ".into(),
+            api_key: None,
+            web_mode: WebMode::Auto,
+            always_on_top: true,
+            autostart: false,
+        })
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "invalidSettings");
+    assert!(db.handle().load_settings().unwrap().model.is_empty());
+}
+
+#[tokio::test]
 async fn omitted_key_preserves_the_credential_until_explicitly_cleared() {
     let db = TestDatabase::new();
     let vault = FakeCredentialStore::default();
