@@ -17,6 +17,7 @@ use commands::exploration::{
     build_exploration_orchestrator, cancel_exploration, start_exploration,
 };
 use commands::memory::clear_memory;
+use commands::profile::{load_aibb_profile, reset_aibb_avatar, save_aibb_avatar, save_aibb_name};
 use commands::settings::{clear_api_key, load_settings, save_settings, test_connection};
 use commands::window::{
     exit_app, open_settings_window, save_pet_position, start_pet_drag, toggle_chat_window,
@@ -54,9 +55,14 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
 
-            let database_path = app.path().app_data_dir()?.join("aibb.sqlite3");
+            let app_data_dir = app.path().app_data_dir()?;
+            let database_path = app_data_dir.join("aibb.sqlite3");
             let database = Database::open(database_path)?;
-            let settings = SettingsService::new(database.clone(), NativeCredentialStore);
+            let settings = SettingsService::new_with_app_data_dir(
+                database.clone(),
+                NativeCredentialStore,
+                app_data_dir,
+            );
             let memory = MemoryRepository::new(database.clone());
             let bootstrap = tauri::async_runtime::block_on(settings.load_bootstrap_state())?;
             let exploration = build_exploration_orchestrator(
@@ -88,6 +94,10 @@ pub fn run() {
             save_settings,
             clear_api_key,
             test_connection,
+            load_aibb_profile,
+            save_aibb_name,
+            save_aibb_avatar,
+            reset_aibb_avatar,
             clear_memory,
             start_exploration,
             cancel_exploration,
@@ -102,7 +112,11 @@ pub fn run() {
 mod tests {
     use std::{fs, path::Path};
 
-    use crate::exploration::{ExplorationEvent, ExplorationStatus};
+    use crate::{
+        commands::profile::{profile_window_updates, PROFILE_UPDATED_EVENT},
+        domain::AibbProfile,
+        exploration::{ExplorationEvent, ExplorationStatus},
+    };
     use uuid::Uuid;
 
     #[test]
@@ -140,6 +154,7 @@ mod tests {
                 "core:event:allow-listen",
                 "core:event:allow-unlisten",
                 "core:window:allow-outer-position",
+                "allow-load-aibb-profile",
                 "allow-toggle-chat-window",
                 "allow-open-settings-window",
                 "allow-start-pet-drag",
@@ -178,6 +193,7 @@ mod tests {
                 "core:event:allow-listen",
                 "core:event:allow-unlisten",
                 "allow-get-bootstrap-state",
+                "allow-load-aibb-profile",
                 "allow-open-settings-window",
                 "allow-submit-user-input",
                 "allow-start-exploration",
@@ -199,13 +215,54 @@ mod tests {
         assert_eq!(
             capability["permissions"],
             serde_json::json!([
+                "core:event:allow-listen",
+                "core:event:allow-unlisten",
                 "allow-load-settings",
                 "allow-save-settings",
                 "allow-test-connection",
                 "allow-clear-memory",
-                "allow-exit-app"
+                "allow-exit-app",
+                "allow-load-aibb-profile",
+                "allow-save-aibb-name",
+                "allow-save-aibb-avatar",
+                "allow-reset-aibb-avatar"
             ])
         );
+    }
+
+    #[test]
+    fn profile_update_is_scoped_to_profile_windows_and_contains_only_profile() {
+        let profile = AibbProfile {
+            name: "小团子".into(),
+            avatar_data_url: Some("data:image/webp;base64,UklGRg==".into()),
+            version: 7,
+        };
+
+        let updates = profile_window_updates(&profile);
+
+        assert_eq!(PROFILE_UPDATED_EVENT, "profile://updated");
+        assert_eq!(
+            updates
+                .iter()
+                .map(|update| (update.label, update.title.as_str()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("pet", "小团子"),
+                ("chat", "小团子 Chat"),
+                ("settings", "小团子 Settings")
+            ]
+        );
+        for update in updates {
+            let payload = serde_json::to_value(update.payload).unwrap();
+            assert_eq!(
+                payload,
+                serde_json::json!({
+                    "name": "小团子",
+                    "avatarDataUrl": "data:image/webp;base64,UklGRg==",
+                    "version": 7
+                })
+            );
+        }
     }
 
     #[test]

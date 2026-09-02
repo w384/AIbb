@@ -30,6 +30,7 @@ pub struct PersistedSettings {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PersistedAibbProfile {
     pub name: String,
+    pub avatar_filename: Option<String>,
     pub version: i64,
 }
 
@@ -98,12 +99,14 @@ impl Database {
     pub fn load_aibb_profile(&self) -> Result<PersistedAibbProfile, AppError> {
         self.connection()?
             .query_row(
-                "SELECT aibb_name, profile_version FROM app_settings WHERE singleton = 1",
+                "SELECT aibb_name, avatar_filename, profile_version \
+                 FROM app_settings WHERE singleton = 1",
                 [],
                 |row| {
                     Ok(PersistedAibbProfile {
                         name: row.get(0)?,
-                        version: row.get(1)?,
+                        avatar_filename: row.get(1)?,
+                        version: row.get(2)?,
                     })
                 },
             )
@@ -116,6 +119,18 @@ impl Database {
                 "UPDATE app_settings SET aibb_name = ?1, profile_version = profile_version + 1 \
                  WHERE singleton = 1",
                 params![name],
+            )
+            .map(|_| ())
+            .map_err(|_| storage_error())
+    }
+
+    pub fn set_aibb_avatar_present(&self, present: bool) -> Result<(), AppError> {
+        let avatar_filename = present.then_some("avatar.webp");
+        self.connection()?
+            .execute(
+                "UPDATE app_settings SET avatar_filename = ?1, \
+                 profile_version = profile_version + 1 WHERE singleton = 1",
+                params![avatar_filename],
             )
             .map(|_| ())
             .map_err(|_| storage_error())

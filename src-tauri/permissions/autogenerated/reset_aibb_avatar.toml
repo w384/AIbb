@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-reset-aibb-avatar"
+description = "Enables the reset_aibb_avatar command without any pre-configured scope."
+commands.allow = ["reset_aibb_avatar"]
+
+[[permission]]
+identifier = "deny-reset-aibb-avatar"
+description = "Denies the reset_aibb_avatar command without any pre-configured scope."
+commands.deny = ["reset_aibb_avatar"]

@@ -4,10 +4,16 @@
   "description": "Minimal settings-window access to sanitized settings commands",
   "windows": ["settings"],
   "permissions": [
+    "core:event:allow-listen",
+    "core:event:allow-unlisten",
     "allow-load-settings",
     "allow-save-settings",
     "allow-test-connection",
     "allow-clear-memory",
-    "allow-exit-app"
+    "allow-exit-app",
+    "allow-load-aibb-profile",
+    "allow-save-aibb-name",
+    "allow-save-aibb-avatar",
+    "allow-reset-aibb-avatar"
   ]
 }

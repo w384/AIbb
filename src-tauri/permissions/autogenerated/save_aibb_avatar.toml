@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-save-aibb-avatar"
+description = "Enables the save_aibb_avatar command without any pre-configured scope."
+commands.allow = ["save_aibb_avatar"]
+
+[[permission]]
+identifier = "deny-save-aibb-avatar"
+description = "Denies the save_aibb_avatar command without any pre-configured scope."
+commands.deny = ["save_aibb_avatar"]

@@ -173,6 +173,117 @@ impl TestDatabase {
     fn path(&self) -> &std::path::Path {
         &self.path
     }
+
+    fn app_data_dir(&self) -> &std::path::Path {
+        self._directory.path()
+    }
+}
+
+fn valid_webp_bytes() -> Vec<u8> {
+    b"RIFF\x0c\x00\x00\x00WEBPVP8 \x00\x00\x00\x00".to_vec()
+}
+
+#[tokio::test]
+async fn profile_avatar_import_is_app_owned_and_path_free() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    let avatar = valid_webp_bytes();
+
+    let profile = service
+        .save_aibb_avatar(avatar.clone(), "image/webp".into())
+        .await
+        .unwrap();
+
+    assert!(profile
+        .avatar_data_url
+        .as_deref()
+        .unwrap()
+        .starts_with("data:image/webp;base64,"));
+    assert_eq!(
+        fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
+        avatar
+    );
+    let stored_filename: Option<String> = rusqlite::Connection::open(db.path())
+        .unwrap()
+        .query_row(
+            "SELECT avatar_filename FROM app_settings WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_filename.as_deref(), Some("avatar.webp"));
+    let database_bytes = db.raw_bytes();
+    assert!(!database_bytes
+        .windows(avatar.len())
+        .any(|window| window == avatar));
+    assert!(!database_bytes
+        .windows(b"C:\\Users\\face.png".len())
+        .any(|window| window == b"C:\\Users\\face.png"));
+}
+
+#[tokio::test]
+async fn profile_invalid_avatar_keeps_the_previous_avatar() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    let avatar = valid_webp_bytes();
+    let seeded = service
+        .save_aibb_avatar(avatar.clone(), "image/webp".into())
+        .await
+        .unwrap();
+
+    let invalid_mime = service
+        .save_aibb_avatar(b"not an image".to_vec(), "text/plain".into())
+        .await
+        .unwrap_err();
+    let too_large = service
+        .save_aibb_avatar(vec![0; 5 * 1024 * 1024 + 1], "image/png".into())
+        .await
+        .unwrap_err();
+
+    assert_eq!(invalid_mime.code, "invalidProfile");
+    assert_eq!(too_large.code, "invalidProfile");
+    assert_eq!(service.load_aibb_profile().await.unwrap(), seeded);
+    assert_eq!(
+        fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
+        avatar
+    );
+}
+
+#[tokio::test]
+async fn profile_avatar_reset_removes_the_app_owned_file() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    service
+        .save_aibb_avatar(valid_webp_bytes(), "image/jpeg".into())
+        .await
+        .unwrap();
+
+    let profile = service.reset_aibb_avatar().await.unwrap();
+
+    assert_eq!(profile.avatar_data_url, None);
+    assert_eq!(profile.version, 2);
+    assert!(!db.app_data_dir().join("aibb-profile/avatar.webp").exists());
+    let stored_filename: Option<String> = rusqlite::Connection::open(db.path())
+        .unwrap()
+        .query_row(
+            "SELECT avatar_filename FROM app_settings WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(stored_filename, None);
 }
 
 #[tokio::test]

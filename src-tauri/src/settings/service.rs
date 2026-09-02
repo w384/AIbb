@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use serde::{Deserialize, Serialize};
 use tokio::sync::Mutex as AsyncMutex;
@@ -11,7 +11,13 @@ use crate::{
     storage::{Database, PersistedSettings},
 };
 
-use super::{profile::validate_aibb_name, CredentialStore};
+use super::{
+    profile::{
+        load_avatar_data_url, remove_avatar, validate_aibb_name, validate_avatar,
+        write_avatar_atomically,
+    },
+    CredentialStore,
+};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -51,6 +57,7 @@ pub struct SettingsService {
     database: Database,
     credentials: Arc<dyn CredentialStore>,
     operation: Arc<AsyncMutex<()>>,
+    profile_directory: Option<Arc<PathBuf>>,
 }
 
 impl SettingsService {
@@ -62,7 +69,21 @@ impl SettingsService {
             database,
             credentials: Arc::new(credentials),
             operation: Arc::new(AsyncMutex::new(())),
+            profile_directory: None,
         }
+    }
+
+    pub fn new_with_app_data_dir<C>(
+        database: Database,
+        credentials: C,
+        app_data_dir: impl Into<PathBuf>,
+    ) -> Self
+    where
+        C: CredentialStore + 'static,
+    {
+        let mut service = Self::new(database, credentials);
+        service.profile_directory = Some(Arc::new(app_data_dir.into().join("aibb-profile")));
+        service
     }
 
     pub async fn load(&self) -> Result<ApiSettings, AppError> {
@@ -82,19 +103,51 @@ impl SettingsService {
 
     pub async fn load_aibb_profile(&self) -> Result<AibbProfile, AppError> {
         let _operation = self.operation.lock().await;
+        self.load_aibb_profile_unlocked()
+    }
+
+    fn load_aibb_profile_unlocked(&self) -> Result<AibbProfile, AppError> {
         let profile = self.database.load_aibb_profile()?;
+        let avatar_data_url = match profile.avatar_filename.as_deref() {
+            Some(filename) => Some(load_avatar_data_url(
+                self.profile_directory()?,
+                Some(filename),
+            )?)
+            .flatten(),
+            None => None,
+        };
 
         Ok(AibbProfile {
             name: profile.name,
-            avatar_data_url: None,
+            avatar_data_url,
             version: profile.version,
         })
     }
 
-    pub async fn save_aibb_name(&self, name: String) -> Result<(), AppError> {
+    pub async fn save_aibb_name(&self, name: String) -> Result<AibbProfile, AppError> {
         let _operation = self.operation.lock().await;
         let name = validate_aibb_name(name)?;
-        self.database.save_aibb_name(&name)
+        self.database.save_aibb_name(&name)?;
+        self.load_aibb_profile_unlocked()
+    }
+
+    pub async fn save_aibb_avatar(
+        &self,
+        bytes: Vec<u8>,
+        mime_type: String,
+    ) -> Result<AibbProfile, AppError> {
+        let _operation = self.operation.lock().await;
+        validate_avatar(&bytes, &mime_type)?;
+        write_avatar_atomically(self.profile_directory()?, &bytes)?;
+        self.database.set_aibb_avatar_present(true)?;
+        self.load_aibb_profile_unlocked()
+    }
+
+    pub async fn reset_aibb_avatar(&self) -> Result<AibbProfile, AppError> {
+        let _operation = self.operation.lock().await;
+        remove_avatar(self.profile_directory()?)?;
+        self.database.set_aibb_avatar_present(false)?;
+        self.load_aibb_profile_unlocked()
     }
 
     pub async fn exploration_task_snapshot(&self) -> Result<ExplorationTaskSnapshot, AppError> {
@@ -214,6 +267,15 @@ impl SettingsService {
             .map_err(|_| credential_store_access_error())?
             .is_some_and(|key| !key.trim().is_empty());
         Ok((persisted, api_configured))
+    }
+
+    fn profile_directory(&self) -> Result<&PathBuf, AppError> {
+        self.profile_directory.as_deref().ok_or_else(|| {
+            AppError::new(
+                "profileStorageUnavailable",
+                "The AIbb profile image could not be accessed.",
+            )
+        })
     }
 }
 
