@@ -22,6 +22,18 @@ pub(crate) struct AvatarFileTransaction {
     finished: bool,
 }
 
+trait FileRenamer {
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()>;
+}
+
+struct StdFileRenamer;
+
+impl FileRenamer for StdFileRenamer {
+    fn rename(&self, from: &Path, to: &Path) -> std::io::Result<()> {
+        fs::rename(from, to)
+    }
+}
+
 pub(crate) fn validate_aibb_name(name: String) -> Result<String, AppError> {
     let name = name.trim();
 
@@ -64,6 +76,14 @@ impl AvatarFileTransaction {
         profile_directory: &Path,
         replacement: Option<&[u8]>,
     ) -> Result<Self, AppError> {
+        Self::replace_with_renamer(profile_directory, replacement, &StdFileRenamer)
+    }
+
+    fn replace_with_renamer(
+        profile_directory: &Path,
+        replacement: Option<&[u8]>,
+        renamer: &impl FileRenamer,
+    ) -> Result<Self, AppError> {
         if replacement.is_some() {
             fs::create_dir_all(profile_directory).map_err(|_| avatar_storage_error())?;
         }
@@ -79,7 +99,7 @@ impl AvatarFileTransaction {
         }
 
         let backup_path = if target_path.exists() {
-            if let Err(error) = fs::rename(&target_path, &backup_candidate) {
+            if let Err(error) = renamer.rename(&target_path, &backup_candidate) {
                 remove_if_present(temporary_path.as_deref());
                 return Err(avatar_storage_error_with(error));
             }
@@ -89,12 +109,15 @@ impl AvatarFileTransaction {
         };
 
         let replacement_installed = if let Some(path) = temporary_path.as_ref() {
-            if let Err(error) = fs::rename(path, &target_path) {
+            if let Err(install_error) = renamer.rename(path, &target_path) {
                 if let Some(backup) = backup_path.as_ref() {
-                    let _ = fs::rename(backup, &target_path);
+                    if renamer.rename(backup, &target_path).is_err() {
+                        restore_backup_by_copy(backup, &target_path)?;
+                        remove_if_present(Some(backup));
+                    }
                 }
                 remove_if_present(Some(path));
-                return Err(avatar_storage_error_with(error));
+                return Err(avatar_storage_error_with(install_error));
             }
             true
         } else {
@@ -151,6 +174,16 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
         .map_err(avatar_storage_error_with)?;
     file.write_all(bytes).map_err(avatar_storage_error_with)?;
     file.sync_all().map_err(avatar_storage_error_with)
+}
+
+fn restore_backup_by_copy(backup_path: &Path, target_path: &Path) -> Result<(), AppError> {
+    fs::copy(backup_path, target_path).map_err(avatar_recovery_error_with)?;
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(target_path)
+        .and_then(|file| file.sync_all())
+        .map_err(avatar_recovery_error_with)
 }
 
 pub(crate) fn load_avatar_data_url(
@@ -217,4 +250,86 @@ fn avatar_storage_error() -> AppError {
 
 fn avatar_storage_error_with(_: std::io::Error) -> AppError {
     avatar_storage_error()
+}
+
+fn avatar_recovery_error_with(_: std::io::Error) -> AppError {
+    AppError::new(
+        "profileRecoveryRequired",
+        "The previous AIbb profile image could not be restored automatically.",
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{cell::Cell, io};
+
+    use super::*;
+    use crate::{
+        settings::{FixedCredentialStore, SettingsService},
+        storage::Database,
+    };
+
+    struct FailingInstallAndRestoreRenamer {
+        calls: Cell<usize>,
+    }
+
+    impl FileRenamer for FailingInstallAndRestoreRenamer {
+        fn rename(&self, from: &Path, to: &Path) -> io::Result<()> {
+            let call = self.calls.get() + 1;
+            self.calls.set(call);
+            if call == 1 {
+                fs::rename(from, to)
+            } else {
+                Err(io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "forced rename failure",
+                ))
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn failed_install_and_failed_rename_restore_keep_the_visible_profile_coherent() {
+        let directory = tempfile::tempdir().unwrap();
+        let profile_directory = directory.path().join("aibb-profile");
+        fs::create_dir_all(&profile_directory).unwrap();
+        let target = profile_directory.join(AVATAR_FILENAME);
+        let mut previous = Cursor::new(Vec::new());
+        image::DynamicImage::new_rgba8(1, 1)
+            .write_to(&mut previous, ImageFormat::WebP)
+            .unwrap();
+        let previous = previous.into_inner();
+        fs::write(&target, &previous).unwrap();
+        let database = Database::open(directory.path().join("aibb.sqlite3")).unwrap();
+        database.set_aibb_avatar_present(true).unwrap();
+        let persisted_before = database.load_aibb_profile().unwrap();
+        let service = SettingsService::new_with_app_data_dir(
+            database.clone(),
+            FixedCredentialStore::new(None),
+            directory.path(),
+        );
+        let visible_before = service.load_aibb_profile().await.unwrap();
+        let renamer = FailingInstallAndRestoreRenamer {
+            calls: Cell::new(0),
+        };
+
+        let result = AvatarFileTransaction::replace_with_renamer(
+            &profile_directory,
+            Some(b"replacement avatar"),
+            &renamer,
+        );
+
+        assert!(result.is_err());
+        assert_eq!(renamer.calls.get(), 3);
+        assert_eq!(fs::read(&target).unwrap(), previous);
+        assert_eq!(database.load_aibb_profile().unwrap(), persisted_before);
+        assert_eq!(service.load_aibb_profile().await.unwrap(), visible_before);
+        assert_eq!(
+            fs::read_dir(&profile_directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name())
+                .collect::<Vec<_>>(),
+            vec![std::ffi::OsString::from(AVATAR_FILENAME)]
+        );
+    }
 }
