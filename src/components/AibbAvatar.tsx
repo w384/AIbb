@@ -1,12 +1,19 @@
 interface AibbAvatarProps {
+  avatarDataUrl?: string | null;
   className?: string;
+  name?: string;
 }
 
-export function AibbAvatar({ className = "" }: AibbAvatarProps) {
+export function AibbAvatar({ avatarDataUrl, className = "", name = "AIbb" }: AibbAvatarProps) {
+  const avatarClassName = `aibb-avatar ${className}`.trim();
+  if (avatarDataUrl) {
+    return <img alt={name} className={avatarClassName} src={avatarDataUrl} />;
+  }
+
   return (
     <svg
       aria-hidden="true"
-      className={`aibb-avatar ${className}`.trim()}
+      className={avatarClassName}
       focusable="false"
       viewBox="0 0 72 72"
     >

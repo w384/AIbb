@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   ApiSettings,
+  AibbProfile,
   BootstrapState,
   ChatCompleteEvent,
   ChatDeltaEvent,
@@ -61,6 +62,22 @@ export function cancelExploration(taskId: string): Promise<void> {
 
 export function loadSettings(): Promise<ApiSettings> {
   return invoke("load_settings");
+}
+
+export function loadAibbProfile(): Promise<AibbProfile> {
+  return invoke("load_aibb_profile");
+}
+
+export function saveAibbName(name: string): Promise<AibbProfile> {
+  return invoke("save_aibb_name", { name });
+}
+
+export function saveAibbAvatar(bytes: Uint8Array, mimeType: string): Promise<AibbProfile> {
+  return invoke("save_aibb_avatar", { bytes: Array.from(bytes), mimeType });
+}
+
+export function resetAibbAvatar(): Promise<AibbProfile> {
+  return invoke("reset_aibb_avatar");
 }
 
 export function saveSettings(settings: SaveSettings): Promise<void> {

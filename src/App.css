@@ -112,6 +112,10 @@ body,
   height: 100%;
 }
 
+img.aibb-avatar {
+  object-fit: cover;
+}
+
 @keyframes pet-exploring {
   0%,
   100% {
@@ -642,6 +646,76 @@ body,
   background: rgb(255 255 255 / 88%);
   box-shadow: 0 18px 44px rgb(49 77 136 / 13%);
   backdrop-filter: blur(14px);
+}
+
+.profile-card {
+  display: grid;
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgb(96 119 177 / 16%);
+  border-radius: 18px;
+  background: linear-gradient(135deg, #f7fbff, #f9f5ff);
+}
+
+.profile-preview {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.profile-avatar {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  flex: 0 0 auto;
+  padding: 3px;
+  place-items: center;
+  overflow: hidden;
+  border: 2px solid rgb(89 123 192 / 20%);
+  border-radius: 50%;
+  background: #fff;
+  box-shadow: 0 7px 16px rgb(59 82 151 / 14%);
+}
+
+.profile-preview h2,
+.profile-preview p {
+  margin: 0;
+}
+
+.profile-preview h2 {
+  color: #3b4968;
+  font-size: 13px;
+}
+
+.profile-preview strong {
+  display: block;
+  margin-top: 2px;
+  color: #18223d;
+  font-size: 18px;
+}
+
+.profile-preview p {
+  margin-top: 3px;
+  color: #73809b;
+  font-size: 12px;
+}
+
+.profile-actions {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.file-button {
+  display: grid;
+  place-items: center;
+}
+
+.file-button input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
 }
 
 .field {

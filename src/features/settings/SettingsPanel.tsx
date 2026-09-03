@@ -1,12 +1,18 @@
-import { useEffect, useState, type FormEvent } from "react";
-import type { ApiSettings, AppErrorPayload, SaveSettings, WebMode } from "../../contracts";
+import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { AibbAvatar } from "../../components/AibbAvatar";
+import type { AibbProfile, ApiSettings, AppErrorPayload, SaveSettings, WebMode } from "../../contracts";
 import {
   clearMemory,
   exitApp,
+  loadAibbProfile,
   loadSettings,
+  resetAibbAvatar,
+  saveAibbAvatar,
+  saveAibbName,
   saveSettings,
   testConnection,
 } from "../../lib/tauri";
+import { normalizeAvatarFile, type NormalizedAvatarImage } from "../profile/avatarImage";
 
 const EMPTY_SETTINGS: ApiSettings = {
   apiBase: "",
@@ -15,6 +21,12 @@ const EMPTY_SETTINGS: ApiSettings = {
   alwaysOnTop: true,
   autostart: false,
   apiConfigured: false,
+};
+
+const EMPTY_PROFILE: AibbProfile = {
+  name: "AIbb",
+  avatarDataUrl: null,
+  version: 0,
 };
 
 const DEEPSEEK_MODEL = "deepseek-v4-flash";
@@ -44,6 +56,9 @@ function publicError(reason: unknown): AppErrorPayload {
     invalid_request: "请求被模型服务拒绝，请检查 API 地址和模型名称。",
     credentialStoreUnavailable: "无法读取或保存 API Key，请检查系统凭据服务。",
     settingsRollbackFailed: "设置保存失败，并且无法恢复之前的设置。",
+    invalidProfile: "AIbb 资料无效，请检查昵称或头像后重试。",
+    profileStorageUnavailable: "无法访问 AIbb 头像，请稍后再试。",
+    profileRecoveryRequired: "头像保存未完成，请重新打开设置后再试。",
   };
   return {
     code,
@@ -53,19 +68,25 @@ function publicError(reason: unknown): AppErrorPayload {
 
 export function SettingsPanel() {
   const [settings, setSettings] = useState<ApiSettings>(EMPTY_SETTINGS);
+  const [profile, setProfile] = useState<AibbProfile>(EMPTY_PROFILE);
+  const [profileName, setProfileName] = useState(EMPTY_PROFILE.name);
+  const [pendingAvatar, setPendingAvatar] = useState<NormalizedAvatarImage | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<AppErrorPayload | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [settingsInFlight, setSettingsInFlight] = useState(false);
+  const [profileInFlight, setProfileInFlight] = useState(false);
 
   useEffect(() => {
     let disposed = false;
-    void loadSettings()
-      .then((loadedSettings) => {
+    void Promise.all([loadSettings(), loadAibbProfile()])
+      .then(([loadedSettings, loadedProfile]) => {
         if (!disposed) {
           setSettings(withProviderDefaults(loadedSettings));
+          setProfile(loadedProfile);
+          setProfileName(loadedProfile.name);
           setApiKey("");
           setLoaded(true);
         }
@@ -141,6 +162,71 @@ export function SettingsPanel() {
     setApiKey((current) => (current === submittedKey ? "" : current));
   }
 
+  async function selectAvatar(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file || profileInFlight) return;
+
+    setError(null);
+    setNotice(null);
+    setProfileInFlight(true);
+    try {
+      const normalized = await normalizeAvatarFile(file);
+      setPendingAvatar(normalized);
+      setProfile((current) => ({
+        ...current,
+        avatarDataUrl: imageDataUrl(normalized.bytes, normalized.mimeType),
+      }));
+      setNotice("新头像已准备好，保存 AIbb 资料后生效。");
+    } catch {
+      setError({
+        code: "invalidProfile",
+        message: "头像处理失败，请选择 PNG、JPEG 或 WebP 格式且不超过 5 MiB 的图片。",
+      });
+    } finally {
+      setProfileInFlight(false);
+    }
+  }
+
+  async function saveProfile() {
+    if (profileInFlight) return;
+    setError(null);
+    setNotice(null);
+    setProfileInFlight(true);
+    try {
+      let savedProfile = await saveAibbName(profileName.trim());
+      if (pendingAvatar) {
+        savedProfile = await saveAibbAvatar(pendingAvatar.bytes, pendingAvatar.mimeType);
+        setPendingAvatar(null);
+      }
+      setProfile(savedProfile);
+      setProfileName(savedProfile.name);
+      setNotice("AIbb 资料已保存");
+    } catch (reason) {
+      setError(publicError(reason));
+    } finally {
+      setProfileInFlight(false);
+    }
+  }
+
+  async function resetAvatar() {
+    if (profileInFlight) return;
+    setError(null);
+    setNotice(null);
+    setProfileInFlight(true);
+    try {
+      const savedProfile = await resetAibbAvatar();
+      setProfile(savedProfile);
+      setProfileName(savedProfile.name);
+      setPendingAvatar(null);
+      setNotice("已恢复 AIbb 默认头像");
+    } catch (reason) {
+      setError(publicError(reason));
+    } finally {
+      setProfileInFlight(false);
+    }
+  }
+
   async function confirmClear() {
     setError(null);
     try {
@@ -164,7 +250,35 @@ export function SettingsPanel() {
         </div>
       </header>
 
-      <form className="settings-form" aria-busy={settingsInFlight} onSubmit={save}>
+      <form className="settings-form" aria-busy={settingsInFlight || profileInFlight} onSubmit={save}>
+        <section className="profile-card" aria-labelledby="profile-heading">
+          <div className="profile-preview" aria-label="AIbb 资料预览">
+            <span className="profile-avatar"><AibbAvatar avatarDataUrl={profile.avatarDataUrl} name={profileName.trim() || profile.name} /></span>
+            <div>
+              <h2 id="profile-heading">AIbb 资料</h2>
+              <strong>{profileName.trim() || profile.name}</strong>
+              <p>昵称和头像只保存在这台设备上。</p>
+            </div>
+          </div>
+          <label className="field">
+            <span>AIbb 昵称</span>
+            <input
+              disabled={profileInFlight}
+              maxLength={24}
+              value={profileName}
+              onChange={(event) => setProfileName(event.target.value)}
+            />
+          </label>
+          <div className="profile-actions">
+            <label className="button secondary file-button">
+              <span>选择头像</span>
+              <input aria-label="选择头像" accept="image/png,image/jpeg,image/webp" disabled={profileInFlight} type="file" onChange={(event) => void selectAvatar(event)} />
+            </label>
+            <button className="button secondary" disabled={profileInFlight || !profile.avatarDataUrl} type="button" onClick={() => void resetAvatar()}>恢复默认头像</button>
+            <button className="button primary" disabled={profileInFlight} type="button" onClick={() => void saveProfile()}>保存 AIbb 资料</button>
+          </div>
+        </section>
+
         <label className="field">
           <span>API 地址</span>
           <input
@@ -264,4 +378,10 @@ export function SettingsPanel() {
       )}
     </main>
   );
+}
+
+function imageDataUrl(bytes: Uint8Array, mimeType: string): string {
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return `data:${mimeType};base64,${btoa(binary)}`;
 }

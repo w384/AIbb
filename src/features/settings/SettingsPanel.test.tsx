@@ -4,7 +4,11 @@ import { SettingsPanel } from "./SettingsPanel";
 import {
   clearMemory,
   exitApp,
+  loadAibbProfile,
   loadSettings,
+  resetAibbAvatar,
+  saveAibbAvatar,
+  saveAibbName,
   saveSettings,
   testConnection,
 } from "../../lib/tauri";
@@ -12,7 +16,11 @@ import {
 vi.mock("../../lib/tauri", () => ({
   clearMemory: vi.fn(),
   exitApp: vi.fn(),
+  loadAibbProfile: vi.fn(),
   loadSettings: vi.fn(),
+  resetAibbAvatar: vi.fn(),
+  saveAibbAvatar: vi.fn(),
+  saveAibbName: vi.fn(),
   saveSettings: vi.fn(),
   testConnection: vi.fn(),
 }));
@@ -24,6 +32,26 @@ describe("SettingsPanel", () => {
     vi.mocked(testConnection).mockResolvedValue();
     vi.mocked(clearMemory).mockResolvedValue();
     vi.mocked(exitApp).mockResolvedValue();
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "AIbb",
+      avatarDataUrl: null,
+      version: 0,
+    });
+    vi.mocked(resetAibbAvatar).mockResolvedValue({
+      name: "AIbb",
+      avatarDataUrl: null,
+      version: 1,
+    });
+    vi.mocked(saveAibbAvatar).mockResolvedValue({
+      name: "AIbb",
+      avatarDataUrl: "data:image/webp;base64,AQID",
+      version: 1,
+    });
+    vi.mocked(saveAibbName).mockResolvedValue({
+      name: "AIbb",
+      avatarDataUrl: null,
+      version: 1,
+    });
     vi.mocked(loadSettings).mockResolvedValue({
       apiBase: "https://example.test/v1",
       model: "m",
@@ -32,6 +60,34 @@ describe("SettingsPanel", () => {
       autostart: false,
       apiConfigured: true,
     });
+  });
+
+  it("saves a trimmed nickname and previews it", async () => {
+    render(<SettingsPanel />);
+    fireEvent.change(await screen.findByLabelText("AIbb 昵称"), { target: { value: " 小团子 " } });
+
+    expect(screen.getByText("小团子")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: "保存 AIbb 资料" }));
+
+    await waitFor(() => expect(saveAibbName).toHaveBeenCalledWith("小团子"));
+  });
+
+  it("keeps the current preview when a selected image cannot be normalized", async () => {
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "AIbb",
+      avatarDataUrl: "data:image/webp;base64,OLD",
+      version: 2,
+    });
+    render(<SettingsPanel />);
+
+    const image = await screen.findByRole("img", { name: "AIbb" });
+    fireEvent.change(screen.getByLabelText("选择头像"), {
+      target: { files: [new File(["not an image"], "bad.gif", { type: "image/gif" })] },
+    });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("头像处理失败");
+    expect(image).toHaveAttribute("src", "data:image/webp;base64,OLD");
+    expect(saveAibbAvatar).not.toHaveBeenCalled();
   });
 
   it("loads only non-secret settings and keeps the replacement API key empty", async () => {

@@ -6,6 +6,12 @@ export interface BootstrapState {
   apiConfigured: boolean;
 }
 
+export interface AibbProfile {
+  name: string;
+  avatarDataUrl: string | null;
+  version: number;
+}
+
 export type WebMode = "auto" | "force" | "off";
 
 export interface ApiSettings {
