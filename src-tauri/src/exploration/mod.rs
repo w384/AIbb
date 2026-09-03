@@ -1,7 +1,9 @@
 mod contract;
+mod diary;
 mod orchestrator;
 
 pub use contract::{build_contract_correction, parse_exploration_result, ContractViolation};
+pub use diary::{build_outing_diary_request, parse_outing_diary};
 pub use orchestrator::{
     parse_outing_command, CancelOutcome, DefaultPublicWebFactory, ExplorationEvent,
     ExplorationEventSink, ExplorationMemory, ExplorationOrchestrator, ExplorationRecord,

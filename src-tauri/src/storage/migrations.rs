@@ -65,11 +65,19 @@ ALTER TABLE app_settings ADD COLUMN avatar_filename TEXT;
 ALTER TABLE app_settings ADD COLUMN profile_version INTEGER NOT NULL DEFAULT 0;
 "#;
 
+const OUTING_DIARIES: &str = r#"
+ALTER TABLE explorations ADD COLUMN diary TEXT;
+ALTER TABLE explorations ADD COLUMN sources_json TEXT;
+ALTER TABLE explorations ADD COLUMN round_number INTEGER;
+ALTER TABLE explorations ADD COLUMN elapsed_seconds INTEGER;
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
     Migrations::new(vec![
         M::up(INITIAL_SCHEMA),
         M::up(DEEPSEEK_MODEL_BACKFILL),
         M::up(AIBB_PROFILE),
+        M::up(OUTING_DIARIES),
     ])
     .to_latest(connection)
 }

@@ -91,7 +91,7 @@ pub struct SummaryCandidate {
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct WebMaterial {
-    pub pages: Vec<String>,
+    pub pages: Vec<WebPageMaterial>,
 }
 
 impl WebMaterial {
@@ -102,9 +102,64 @@ impl WebMaterial {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct OutingSource {
+    pub title: String,
+    pub url: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct WebPageMaterial {
+    pub source: OutingSource,
+    pub text: String,
+}
+
+impl WebPageMaterial {
+    pub(crate) fn from_untrusted(title: &str, raw_url: &str, text: &str) -> Option<Self> {
+        let source = OutingSource::from_untrusted(title, raw_url)?;
+        Some(Self {
+            source,
+            text: text.chars().take(6_000).collect(),
+        })
+    }
+}
+
+impl OutingSource {
+    pub(crate) fn from_untrusted(title: &str, raw_url: &str) -> Option<Self> {
+        let title = title.trim();
+        if title.is_empty()
+            || title.chars().any(char::is_control)
+            || title.chars().count() > 200
+            || raw_url.len() > 2_048
+        {
+            return None;
+        }
+
+        let mut url = url::Url::parse(raw_url).ok()?;
+        if url.scheme() != "https"
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return None;
+        }
+        url.set_fragment(None);
+
+        Some(Self {
+            title: title.to_string(),
+            url: url.to_string(),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct ExplorationResult {
     pub items: [String; 4],
-    pub next_outing_request: String,
+    pub diary: String,
+    pub sources: Vec<OutingSource>,
+    pub round_number: u64,
+    pub elapsed_seconds: u64,
     pub raw_response: String,
 }
 

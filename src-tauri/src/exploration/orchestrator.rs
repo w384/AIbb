@@ -1,6 +1,7 @@
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex},
+    time::Instant,
 };
 
 use async_trait::async_trait;
@@ -9,7 +10,10 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
-    domain::{ExplorationResult, MemoryContext, SummaryCandidate, WebMaterial, WebMode},
+    domain::{
+        ExplorationResult, MemoryContext, OutingSource, SummaryCandidate, WebMaterial, WebMode,
+        WebPageMaterial,
+    },
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     llm::{ChatMessage, ChatRequest, LlmTransport, NativeWebOutcome, NativeWebRequest},
     memory::{ContextBuilder, MemoryRepository},
@@ -20,7 +24,10 @@ use crate::{
     web::{DuckDuckGoHtmlSearch, FetchBudget, PageFetcher, SafePageFetcher, SearchProvider},
 };
 
-use super::{build_contract_correction, parse_exploration_result};
+use super::{
+    build_contract_correction, build_outing_diary_request, parse_exploration_result,
+    parse_outing_diary,
+};
 
 pub const EXPLORATION_PROGRESS_EVENT: &str = "exploration://progress";
 pub const EXPLORATION_COMPLETE_EVENT: &str = "exploration://complete";
@@ -195,7 +202,10 @@ pub struct ExplorationRecord {
     pub status: ExplorationStatus,
     pub user_direction: Option<String>,
     pub items: Option<[String; 4]>,
-    pub next_outing_request: Option<String>,
+    pub diary: Option<String>,
+    pub sources: Option<Vec<OutingSource>>,
+    pub round_number: Option<u64>,
+    pub elapsed_seconds: Option<u64>,
     pub raw_response: Option<String>,
     pub error_code: Option<String>,
     pub created_at: i64,
@@ -229,6 +239,7 @@ pub trait ExplorationStore: Send + Sync {
     async fn cancel(&self, id: Uuid) -> Result<CancelOutcome, AppError>;
     async fn recover_interrupted(&self) -> Result<usize, AppError>;
     async fn load(&self, id: Uuid) -> Result<Option<ExplorationRecord>, AppError>;
+    async fn completed_outings(&self) -> Result<u64, AppError>;
 }
 
 #[async_trait]
@@ -593,6 +604,7 @@ impl ExplorationOrchestrator {
         request: ExplorationRequest,
         cancellation: CancellationToken,
     ) -> Result<ExplorationResult, AppError> {
+        let started_at = Instant::now();
         ensure_not_cancelled(&cancellation)?;
         let runtime = self.runtime_factory.create().await?;
         let context = self
@@ -602,7 +614,7 @@ impl ExplorationOrchestrator {
         self.progress(task_id, ExplorationStatus::Choosing).await?;
 
         let web_mode = runtime.web_mode;
-        let raw = match web_mode {
+        let (raw, web_material) = match web_mode {
             WebMode::Off => {
                 self.public_exploration(task_id, context.clone(), &runtime, cancellation.clone())
                     .await?
@@ -621,9 +633,16 @@ impl ExplorationOrchestrator {
                     )
                     .await
                 {
-                    Ok(NativeWebOutcome::Completed(raw)) => {
+                    Ok(NativeWebOutcome::Completed { text, sources }) => {
                         self.progress(task_id, ExplorationStatus::Writing).await?;
-                        raw
+                        let pages = sources
+                            .into_iter()
+                            .map(|source| WebPageMaterial {
+                                source,
+                                text: String::new(),
+                            })
+                            .collect();
+                        (text, WebMaterial { pages })
                     }
                     Ok(NativeWebOutcome::Unsupported) if web_mode == WebMode::Auto => {
                         self.public_exploration(task_id, context, &runtime, cancellation.clone())
@@ -647,7 +666,7 @@ impl ExplorationOrchestrator {
         };
 
         ensure_not_cancelled(&cancellation)?;
-        let result = match parse_exploration_result(&raw) {
+        let mut result = match parse_exploration_result(&raw) {
             Ok(result) => result,
             Err(violation) => {
                 self.progress(task_id, ExplorationStatus::Correcting)
@@ -681,6 +700,24 @@ impl ExplorationOrchestrator {
             }
         };
 
+        result = sanitize_result(result, &runtime.credential);
+        let web_material = sanitize_web_material(web_material, &runtime.credential);
+        ensure_not_cancelled(&cancellation)?;
+        let diary_raw = runtime
+            .llm
+            .complete(
+                build_outing_diary_request(&result, &web_material),
+                cancellation.clone(),
+            )
+            .await?;
+        result.diary = parse_outing_diary(&diary_raw)?;
+        result.sources = web_material
+            .pages
+            .iter()
+            .map(|page| page.source.clone())
+            .collect();
+        result.round_number = self.store.completed_outings().await?.saturating_add(1);
+        result.elapsed_seconds = started_at.elapsed().as_secs();
         let result = sanitize_result(result, &runtime.credential);
         self.store
             .complete(task_id, &result, &result.raw_response)
@@ -703,7 +740,7 @@ impl ExplorationOrchestrator {
         context: MemoryContext,
         task_runtime: &ExplorationTaskRuntime,
         cancellation: CancellationToken,
-    ) -> Result<String, AppError> {
+    ) -> Result<(String, WebMaterial), AppError> {
         self.progress(task_id, ExplorationStatus::PublicSearching)
             .await?;
         let query_raw = task_runtime
@@ -740,21 +777,28 @@ impl ExplorationOrchestrator {
         for url in urls.into_iter().take(8) {
             ensure_not_cancelled(&cancellation)?;
             match public_web.fetcher.fetch(&url).await {
-                Ok(page) => pages.push(format!(
-                    "标题：{}\n地址：{}\n正文：{}",
-                    page.title, page.canonical_url, page.text
-                )),
+                Ok(page) => {
+                    if let Some(page) = WebPageMaterial::from_untrusted(
+                        &page.title,
+                        &page.canonical_url,
+                        &page.text,
+                    ) {
+                        pages.push(page);
+                    }
+                }
                 Err(error) if error.code == ErrorCode::Cancelled.as_str() => return Err(error),
                 Err(_) => continue,
             }
         }
 
         self.progress(task_id, ExplorationStatus::Writing).await?;
-        let prompt = build_exploration_prompt(context, WebMaterial { pages });
-        task_runtime
+        let web_material = WebMaterial { pages };
+        let prompt = build_exploration_prompt(context, web_material.clone());
+        let raw = task_runtime
             .llm
             .complete(prompt_as_chat_request(&prompt), cancellation)
-            .await
+            .await?;
+        Ok((raw, web_material))
     }
 
     async fn progress(&self, task_id: Uuid, status: ExplorationStatus) -> Result<(), AppError> {
@@ -832,13 +876,43 @@ fn sanitize_result(
     for item in &mut result.items {
         *item = sanitize_sensitive_text(item, exact_key);
     }
-    result.next_outing_request = sanitize_sensitive_text(&result.next_outing_request, exact_key);
+    result.diary = sanitize_sensitive_text(&result.diary, exact_key);
+    result.sources = result
+        .sources
+        .into_iter()
+        .filter_map(|source| {
+            let title = sanitize_sensitive_text(&source.title, exact_key);
+            let url = sanitize_sensitive_text(&source.url, exact_key);
+            OutingSource::from_untrusted(&title, &url)
+        })
+        .collect();
     if exact_key.is_some() {
         result.raw_response = sanitize_sensitive_text(&result.raw_response, exact_key);
     } else {
         result.raw_response = "[RAW RESPONSE OMITTED]".to_string();
     }
     result
+}
+
+fn sanitize_web_material(
+    material: WebMaterial,
+    credential: &ExplorationTaskCredential,
+) -> WebMaterial {
+    let exact_key = credential.exact_key();
+    let pages = material
+        .pages
+        .into_iter()
+        .filter_map(|page| {
+            let title = sanitize_sensitive_text(&page.source.title, exact_key);
+            let url = sanitize_sensitive_text(&page.source.url, exact_key);
+            let source = OutingSource::from_untrusted(&title, &url)?;
+            Some(WebPageMaterial {
+                source,
+                text: sanitize_sensitive_text(&page.text, exact_key),
+            })
+        })
+        .collect();
+    WebMaterial { pages }
 }
 
 fn sanitize_raw(raw: &str, credential: &ExplorationTaskCredential) -> String {
@@ -914,7 +988,19 @@ fn prompt_context_text(prompt: &ModelPrompt) -> String {
     let pages = prompt
         .web_material
         .as_ref()
-        .map(|material| material.pages.join("\n\n"))
+        .map(|material| {
+            material
+                .pages
+                .iter()
+                .map(|page| {
+                    format!(
+                        "标题：{}\n地址：{}\n正文：{}",
+                        page.source.title, page.source.url, page.text
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("\n\n")
+        })
         .unwrap_or_default();
     format!(
         "当前输入：{}\n上一段：{}\n近期消息：{}\n旧摘要：{}\n公开网页材料：{}",

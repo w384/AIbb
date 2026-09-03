@@ -4,7 +4,7 @@ use std::{
 };
 
 use aibb_desktop_pet_lib::{
-    domain::WebMode,
+    domain::{OutingSource, WebMode},
     error::{AppError, ErrorCode},
     llm::{
         parse_sse_text, ChatMessage, ChatRequest, DeltaSink, LlmTransport, NativeWebOutcome,
@@ -279,7 +279,18 @@ async fn native_web_posts_the_required_tool_and_source_include() {
             "include": ["web_search_call.action.sources"]
         })))
         .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "output_text": "结果"
+            "output_text": "结果",
+            "output": [{
+                "type": "web_search_call",
+                "action": {
+                    "sources": [
+                        {"type": "url", "title": "  安全来源  ", "url": "https://example.com/article"},
+                        {"type": "url", "title": "不安全协议", "url": "http://example.com/plain"},
+                        {"type": "url", "title": "脚本", "url": "javascript:alert(1)"},
+                        {"type": "url", "title": "   ", "url": "https://example.com/empty-title"}
+                    ]
+                }
+            }]
         })))
         .expect(1)
         .mount(&server)
@@ -290,7 +301,16 @@ async fn native_web_posts_the_required_tool_and_source_include() {
         .await
         .unwrap();
 
-    assert_eq!(outcome, NativeWebOutcome::Completed("结果".into()));
+    assert_eq!(
+        outcome,
+        NativeWebOutcome::Completed {
+            text: "结果".into(),
+            sources: vec![OutingSource {
+                title: "安全来源".into(),
+                url: "https://example.com/article".into(),
+            }],
+        }
+    );
 }
 
 #[tokio::test]

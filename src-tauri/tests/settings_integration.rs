@@ -805,6 +805,33 @@ fn migrations_create_the_required_schema_without_an_api_key_column() {
             "profile_version"
         ]
     );
+
+    let mut exploration_column_statement = connection
+        .prepare("PRAGMA table_info(explorations)")
+        .unwrap();
+    let exploration_columns = exploration_column_statement
+        .query_map([], |row| row.get::<_, String>(1))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    assert_eq!(
+        exploration_columns,
+        vec![
+            "id",
+            "status",
+            "user_direction",
+            "items_json",
+            "next_outing_request",
+            "raw_response",
+            "error_code",
+            "created_at",
+            "updated_at",
+            "diary",
+            "sources_json",
+            "round_number",
+            "elapsed_seconds",
+        ]
+    );
 }
 
 #[tokio::test]

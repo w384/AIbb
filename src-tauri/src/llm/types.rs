@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::AppError;
+use crate::{domain::OutingSource, error::AppError};
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct ChatMessage {
@@ -37,7 +37,10 @@ pub struct NativeWebRequest {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum NativeWebOutcome {
-    Completed(String),
+    Completed {
+        text: String,
+        sources: Vec<OutingSource>,
+    },
     Unsupported,
 }
 

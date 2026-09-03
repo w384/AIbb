@@ -238,15 +238,25 @@ impl ExplorationStore for Database {
         let now = unix_milliseconds()?.max(updated_at.saturating_add(1));
         let items =
             serde_json::to_string(&result.items).map_err(|_| exploration_storage_error())?;
+        let sources =
+            serde_json::to_string(&result.sources).map_err(|_| exploration_storage_error())?;
+        let round_number =
+            i64::try_from(result.round_number).map_err(|_| exploration_storage_error())?;
+        let elapsed_seconds =
+            i64::try_from(result.elapsed_seconds).map_err(|_| exploration_storage_error())?;
         let changed = transaction
             .execute(
                 "UPDATE explorations SET status = ?1, items_json = ?2, \
-                   next_outing_request = ?3, raw_response = ?4, error_code = NULL, \
-                   updated_at = ?5 WHERE id = ?6",
+                   diary = ?3, sources_json = ?4, round_number = ?5, elapsed_seconds = ?6, \
+                   next_outing_request = NULL, raw_response = ?7, error_code = NULL, \
+                   updated_at = ?8 WHERE id = ?9",
                 params![
                     ExplorationStatus::Completed.as_storage_value(),
                     items,
-                    result.next_outing_request,
+                    result.diary,
+                    sources,
+                    round_number,
+                    elapsed_seconds,
                     safe_raw_response,
                     now,
                     id.to_string()
@@ -270,7 +280,7 @@ impl ExplorationStore for Database {
                 params![
                     format!("message-{}", Uuid::new_v4()),
                     "assistant",
-                    result.next_outing_request,
+                    result.diary,
                     message_created_at
                 ],
             )
@@ -366,6 +376,18 @@ impl ExplorationStore for Database {
         let connection = self.connection()?;
         exploration_from_connection(&connection, id)
     }
+
+    async fn completed_outings(&self) -> Result<u64, AppError> {
+        let count = self
+            .connection()?
+            .query_row(
+                "SELECT COUNT(*) FROM explorations WHERE status = 'completed'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| exploration_storage_error())?;
+        u64::try_from(count).map_err(|_| exploration_storage_error())
+    }
 }
 
 fn exploration_from_connection(
@@ -374,8 +396,8 @@ fn exploration_from_connection(
 ) -> Result<Option<ExplorationRecord>, AppError> {
     let mut statement = connection
         .prepare(
-            "SELECT id, status, user_direction, items_json, next_outing_request, \
-             raw_response, error_code, created_at, updated_at \
+            "SELECT id, status, user_direction, items_json, diary, sources_json, \
+             round_number, elapsed_seconds, raw_response, error_code, created_at, updated_at \
              FROM explorations WHERE id = ?1",
         )
         .map_err(|_| exploration_storage_error())?;
@@ -401,17 +423,36 @@ fn exploration_from_row(row: &rusqlite::Row<'_>) -> Result<ExplorationRecord, Ap
         .map(|items| serde_json::from_str::<[String; 4]>(&items))
         .transpose()
         .map_err(|_| exploration_storage_error())?;
+    let sources = row
+        .get::<_, Option<String>>(5)
+        .map_err(|_| exploration_storage_error())?
+        .map(|sources| serde_json::from_str(&sources))
+        .transpose()
+        .map_err(|_| exploration_storage_error())?;
     Ok(ExplorationRecord {
         id: Uuid::parse_str(&id).map_err(|_| exploration_storage_error())?,
         status: ExplorationStatus::from_storage_value(&status)
             .ok_or_else(exploration_storage_error)?,
         user_direction: row.get(2).map_err(|_| exploration_storage_error())?,
         items,
-        next_outing_request: row.get(4).map_err(|_| exploration_storage_error())?,
-        raw_response: row.get(5).map_err(|_| exploration_storage_error())?,
-        error_code: row.get(6).map_err(|_| exploration_storage_error())?,
-        created_at: row.get(7).map_err(|_| exploration_storage_error())?,
-        updated_at: row.get(8).map_err(|_| exploration_storage_error())?,
+        diary: row.get(4).map_err(|_| exploration_storage_error())?,
+        sources,
+        round_number: row
+            .get::<_, Option<i64>>(6)
+            .map_err(|_| exploration_storage_error())?
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|_| exploration_storage_error())?,
+        elapsed_seconds: row
+            .get::<_, Option<i64>>(7)
+            .map_err(|_| exploration_storage_error())?
+            .map(u64::try_from)
+            .transpose()
+            .map_err(|_| exploration_storage_error())?,
+        raw_response: row.get(8).map_err(|_| exploration_storage_error())?,
+        error_code: row.get(9).map_err(|_| exploration_storage_error())?,
+        created_at: row.get(10).map_err(|_| exploration_storage_error())?,
+        updated_at: row.get(11).map_err(|_| exploration_storage_error())?,
     })
 }
 

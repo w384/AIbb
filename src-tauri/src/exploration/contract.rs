@@ -5,7 +5,6 @@ use serde::Deserialize;
 pub enum ContractViolation {
     InvalidEnvelope,
     ItemCount(usize),
-    EmptyRequest,
 }
 
 pub fn parse_exploration_result(raw: &str) -> Result<ExplorationResult, ContractViolation> {
@@ -27,16 +26,14 @@ pub fn parse_exploration_result(raw: &str) -> Result<ExplorationResult, Contract
         return Err(ContractViolation::ItemCount(non_empty_count));
     }
 
-    let next_outing_request = envelope.next_outing_request.trim().to_string();
-    if next_outing_request.is_empty() {
-        return Err(ContractViolation::EmptyRequest);
-    }
-
     Ok(ExplorationResult {
         items: items
             .try_into()
             .map_err(|items: Vec<String>| ContractViolation::ItemCount(items.len()))?,
-        next_outing_request,
+        diary: String::new(),
+        sources: Vec::new(),
+        round_number: 0,
+        elapsed_seconds: 0,
         raw_response: raw.to_string(),
     })
 }
@@ -45,18 +42,16 @@ pub fn build_contract_correction(raw: &str, violation: ContractViolation) -> Str
     let violation = match violation {
         ContractViolation::InvalidEnvelope => "上次响应不是可解析的约定 JSON 对象。",
         ContractViolation::ItemCount(_) => "探索结果数量不是 4。",
-        ContractViolation::EmptyRequest => "想再次出去玩的请求为空。",
     };
 
     format!("上次响应：\n{raw}\n\n{violation}")
 }
 
 #[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ExplorationEnvelope {
     #[serde(default)]
     items: Vec<String>,
-    #[serde(default)]
-    next_outing_request: String,
 }
 
 fn extract_json_payload(raw: &str) -> Option<&str> {
@@ -83,22 +78,47 @@ fn extract_json_payload(raw: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::exploration::parse_outing_diary;
 
     #[test]
-    fn accepts_exactly_four_trimmed_free_strings_and_one_request() {
-        let raw =
-            r#"{"items":[" 甲 ","乙","丙","丁"],"next_outing_request":" 我还想出去玩，可以吗？ "}"#;
+    fn diary_parser_requires_a_nonempty_json_diary() {
+        assert_eq!(
+            parse_outing_diary(r#"{"diary":"第二轮回来啦"}"#).unwrap(),
+            "第二轮回来啦"
+        );
+        assert!(parse_outing_diary(r#"{"diary":" "}"#).is_err());
+    }
+
+    #[test]
+    fn first_stage_requires_only_four_findings_without_an_automatic_next_request() {
+        let result = parse_exploration_result(r#"{"items":["甲","乙","丙","丁"]}"#).unwrap();
+
+        assert_eq!(result.items, ["甲", "乙", "丙", "丁"]);
+    }
+
+    #[test]
+    fn first_stage_rejects_an_automatic_next_request_field() {
+        let raw = r#"{"items":["甲","乙","丙","丁"],"next_outing_request":"自动再出去玩"}"#;
+
+        assert_eq!(
+            parse_exploration_result(raw).unwrap_err(),
+            ContractViolation::InvalidEnvelope
+        );
+    }
+
+    #[test]
+    fn accepts_exactly_four_trimmed_free_strings() {
+        let raw = r#"{"items":[" 甲 ","乙","丙","丁"]}"#;
 
         let result = parse_exploration_result(raw).unwrap();
 
         assert_eq!(result.items, ["甲", "乙", "丙", "丁"]);
-        assert_eq!(result.next_outing_request, "我还想出去玩，可以吗？");
         assert_eq!(result.raw_response, raw);
     }
 
     #[test]
     fn accepts_one_markdown_fenced_json_object() {
-        let raw = "  ```json\r\n{\"items\":[\"甲\",\"乙\",\"丙\",\"丁\"],\"next_outing_request\":\"再去玩？\"}\r\n```  ";
+        let raw = "  ```json\r\n{\"items\":[\"甲\",\"乙\",\"丙\",\"丁\"]}\r\n```  ";
 
         let result = parse_exploration_result(raw).unwrap();
 
@@ -109,15 +129,9 @@ mod tests {
     #[test]
     fn rejects_any_result_count_other_than_four() {
         for (raw, expected_count) in [
-            (r#"{"items":[],"next_outing_request":"再去玩？"}"#, 0),
-            (
-                r#"{"items":["甲","乙","丙"],"next_outing_request":"再去玩？"}"#,
-                3,
-            ),
-            (
-                r#"{"items":["甲","乙","丙","丁","戊"],"next_outing_request":"再去玩？"}"#,
-                5,
-            ),
+            (r#"{"items":[]}"#, 0),
+            (r#"{"items":["甲","乙","丙"]}"#, 3),
+            (r#"{"items":["甲","乙","丙","丁","戊"]}"#, 5),
         ] {
             assert_eq!(
                 parse_exploration_result(raw).unwrap_err(),
@@ -128,21 +142,11 @@ mod tests {
 
     #[test]
     fn rejects_an_empty_result_as_a_missing_free_text_result() {
-        let raw = r#"{"items":["甲","  ","丙","丁"],"next_outing_request":"再去玩？"}"#;
+        let raw = r#"{"items":["甲","  ","丙","丁"]}"#;
 
         assert_eq!(
             parse_exploration_result(raw).unwrap_err(),
             ContractViolation::ItemCount(3)
-        );
-    }
-
-    #[test]
-    fn rejects_an_empty_final_request() {
-        let raw = r#"{"items":["甲","乙","丙","丁"],"next_outing_request":" \n "}"#;
-
-        assert_eq!(
-            parse_exploration_result(raw).unwrap_err(),
-            ContractViolation::EmptyRequest
         );
     }
 
@@ -166,19 +170,13 @@ mod tests {
         let count = build_contract_correction(raw, ContractViolation::ItemCount(3));
         assert_eq!(count, "上次响应：\n上一份原始响应\n\n探索结果数量不是 4。");
 
-        let request = build_contract_correction(raw, ContractViolation::EmptyRequest);
-        assert_eq!(
-            request,
-            "上次响应：\n上一份原始响应\n\n想再次出去玩的请求为空。"
-        );
-
         let invalid = build_contract_correction(raw, ContractViolation::InvalidEnvelope);
         assert_eq!(
             invalid,
             "上次响应：\n上一份原始响应\n\n上次响应不是可解析的约定 JSON 对象。"
         );
 
-        for correction in [&count, &request, &invalid] {
+        for correction in [&count, &invalid] {
             for forbidden in [
                 "为什么选择",
                 "来源链接",

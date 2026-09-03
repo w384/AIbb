@@ -8,6 +8,7 @@ use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
+    domain::OutingSource,
     error::{AppError, ErrorCode},
     settings::{ApiSettings, CredentialStore},
 };
@@ -312,7 +313,7 @@ impl LlmTransport for OpenAiClient {
                 ));
             }
 
-            Ok(NativeWebOutcome::Completed(parse_response_text(&body)?))
+            parse_native_web_response(&body)
         };
 
         self.execute_with_total(cancellation.clone(), operation)
@@ -431,8 +432,7 @@ fn parse_models_response(body: &str, configured_model: &str) -> Result<(), AppEr
     }
 }
 
-fn parse_response_text(body: &str) -> Result<String, AppError> {
-    let value: Value = serde_json::from_str(body).map_err(invalid_response)?;
+fn parse_response_text_value(value: &Value) -> Result<String, AppError> {
     if let Some(text) = value.get("output_text").and_then(Value::as_str) {
         return Ok(text.to_owned());
     }
@@ -455,6 +455,41 @@ fn parse_response_text(body: &str) -> Result<String, AppError> {
     } else {
         Ok(text)
     }
+}
+
+fn parse_native_web_response(body: &str) -> Result<NativeWebOutcome, AppError> {
+    let value: Value = serde_json::from_str(body).map_err(invalid_response)?;
+    let text = parse_response_text_value(&value)?;
+    let mut sources = Vec::new();
+
+    for source in value
+        .get("output")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|item| item.get("action"))
+        .filter_map(|action| action.get("sources"))
+        .filter_map(Value::as_array)
+        .flatten()
+    {
+        let Some(title) = source.get("title").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(url) = source.get("url").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(source) = OutingSource::from_untrusted(title, url) else {
+            continue;
+        };
+        if sources
+            .iter()
+            .all(|existing: &OutingSource| existing.url != source.url)
+        {
+            sources.push(source);
+        }
+    }
+
+    Ok(NativeWebOutcome::Completed { text, sources })
 }
 
 fn invalid_response(error: impl std::fmt::Display) -> AppError {
