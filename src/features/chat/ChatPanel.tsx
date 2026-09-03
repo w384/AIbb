@@ -80,6 +80,17 @@ function ChatHeader({ profile }: { profile: AibbProfile }) {
   );
 }
 
+function AssistantIdentity({ profile }: { profile: AibbProfile }) {
+  return (
+    <div className="message-identity">
+      <span className="message-avatar">
+        <AibbAvatar avatarDataUrl={profile.avatarDataUrl} name={profile.name} />
+      </span>
+      <span className="message-author">{profile.name}</span>
+    </div>
+  );
+}
+
 export function ChatPanel() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
@@ -94,47 +105,50 @@ export function ChatPanel() {
   useEffect(() => {
     let disposed = false;
     const unlisteners: Array<() => void> = [];
-    const install = async () => {
-      const installed = await Promise.all([
-        listenProfileUpdated((updatedProfile) => {
-          setProfile((current) =>
-            updatedProfile.version >= current.version ? updatedProfile : current,
-          );
-        }),
-        listenChatDelta((event) => {
-          if (event.requestId === activeRequest.current) {
-            setStreamingReply((reply) => reply + event.delta);
-          }
-        }),
-        listenChatComplete((event) => {
-          if (event.requestId !== activeRequest.current) return;
-          setMessages((current) => [
-            ...current,
-            { id: `assistant-${event.requestId}`, role: "assistant", content: event.message },
-          ]);
-          activeRequest.current = null;
-          setActiveRequestId(null);
-          setStreamingReply("");
-        }),
-        listenChatError((event) => {
-          if (event.requestId !== activeRequest.current) return;
-          setError({ code: event.code, message: event.message });
-          activeRequest.current = null;
-          setActiveRequestId(null);
-          setStreamingReply("");
-        }),
-      ]);
-      if (disposed) installed.forEach((unlisten) => unlisten());
-      else unlisteners.push(...installed);
+    const installListener = (registration: Promise<() => void>) => {
+      void registration
+        .then((unlisten) => {
+          if (disposed) unlisten();
+          else unlisteners.push(unlisten);
+        })
+        .catch(() => {});
     };
-    void install();
-    void loadAibbProfile().then((loadedProfile) => {
-      if (!disposed) {
-        setProfile((current) =>
-          loadedProfile.version >= current.version ? loadedProfile : current,
-        );
+    installListener(listenProfileUpdated((updatedProfile) => {
+      setProfile((current) =>
+        updatedProfile.version >= current.version ? updatedProfile : current,
+      );
+    }));
+    installListener(listenChatDelta((event) => {
+      if (event.requestId === activeRequest.current) {
+        setStreamingReply((reply) => reply + event.delta);
       }
-    });
+    }));
+    installListener(listenChatComplete((event) => {
+      if (event.requestId !== activeRequest.current) return;
+      setMessages((current) => [
+        ...current,
+        { id: `assistant-${event.requestId}`, role: "assistant", content: event.message },
+      ]);
+      activeRequest.current = null;
+      setActiveRequestId(null);
+      setStreamingReply("");
+    }));
+    installListener(listenChatError((event) => {
+      if (event.requestId !== activeRequest.current) return;
+      setError({ code: event.code, message: event.message });
+      activeRequest.current = null;
+      setActiveRequestId(null);
+      setStreamingReply("");
+    }));
+    void loadAibbProfile()
+      .then((loadedProfile) => {
+        if (!disposed) {
+          setProfile((current) =>
+            loadedProfile.version >= current.version ? loadedProfile : current,
+          );
+        }
+      })
+      .catch(() => {});
     void getBootstrapState()
       .then((state) => {
         if (!disposed) setBootstrap(state);
@@ -230,13 +244,13 @@ export function ChatPanel() {
         )}
         {messages.map((message) => (
           <article key={message.id} className={`message-row ${message.role}`}>
-            <span className="message-author">{message.role === "assistant" ? profile.name : "你"}</span>
+            {message.role === "assistant" ? <AssistantIdentity profile={profile} /> : <span className="message-author">你</span>}
             <p className="message">{message.content}</p>
           </article>
         ))}
         {activeRequestId && (
           <article className="message-row assistant">
-            <span className="message-author">{profile.name}</span>
+            <AssistantIdentity profile={profile} />
             <p className="message thinking" data-testid="streaming-reply">
               {streamingReply || <><span className="thinking-dot" />正在想…</>}
             </p>

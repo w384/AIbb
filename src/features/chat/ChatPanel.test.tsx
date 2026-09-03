@@ -1,4 +1,4 @@
-import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type {
   ChatCompleteEvent,
@@ -164,6 +164,9 @@ describe("ChatPanel", () => {
     await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
 
     act(() => completeListener({ requestId: mockSubmit.mock.calls[0][1], message: "旧消息正文" }));
+    fireEvent.change(editor, { target: { value: "第二条消息" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(2));
     await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
     act(() => profileListener({
       name: "小团子",
@@ -172,12 +175,41 @@ describe("ChatPanel", () => {
     }));
 
     expect(screen.getByRole("heading", { name: "小团子" })).toBeVisible();
-    expect(screen.getByRole("img", { name: "小团子" })).toHaveAttribute(
+    const historicalArticle = screen.getByText("旧消息正文").closest("article");
+    const activeArticle = screen.getByTestId("streaming-reply").closest("article");
+    expect(historicalArticle).not.toBeNull();
+    expect(activeArticle).not.toBeNull();
+    expect(within(historicalArticle!).getByRole("img", { name: "小团子" })).toHaveAttribute(
       "src",
       "data:image/webp;base64,AA==",
     );
-    expect(screen.getByText("小团子", { selector: ".message-author" })).toBeVisible();
+    expect(within(historicalArticle!).getByText("小团子", { selector: ".message-author" })).toBeVisible();
+    expect(within(activeArticle!).getByRole("img", { name: "小团子" })).toHaveAttribute(
+      "src",
+      "data:image/webp;base64,AA==",
+    );
+    expect(within(activeArticle!).getByText("小团子", { selector: ".message-author" })).toBeVisible();
     expect(screen.getByText("旧消息正文")).toBeVisible();
+  });
+
+  it("cleans up a resolved profile listener when another listener rejects", async () => {
+    vi.mocked(listenChatDelta).mockRejectedValueOnce(new Error("registration failed"));
+    const view = render(<ChatPanel />);
+
+    await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    await waitFor(() => expect(unlistenProfile).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the default identity when profile loading fails", async () => {
+    vi.mocked(loadAibbProfile).mockRejectedValueOnce(new Error("profile unavailable"));
+    render(<ChatPanel />);
+
+    await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(loadAibbProfile).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole("heading", { name: "AIbb" })).toBeVisible();
   });
 
   it("shows a stable scoped streaming error and leaves the composer usable", async () => {

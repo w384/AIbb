@@ -60,34 +60,39 @@ export function PetSurface({ status }: PetSurfaceProps) {
   useEffect(() => {
     let disposed = false;
     const unlisteners: Array<() => void> = [];
-    void Promise.all([
-      listenProfileUpdated((updatedProfile) => {
-        setProfile((current) =>
-          updatedProfile.version >= current.version ? updatedProfile : current,
-        );
-      }),
-      listenExplorationProgress((event) => {
-        if (isActiveExploration(event.status)) {
-          dispatchPet({ type: "EXPLORATION_STARTED", taskId: event.taskId });
-        }
-      }),
-      listenExplorationComplete((event) => {
-        dispatchPet({ type: "EXPLORATION_COMPLETED", taskId: event.taskId });
-      }),
-      listenExplorationError((event) => {
-        dispatchPet({ type: "EXPLORATION_FAILED", taskId: event.taskId });
-      }),
-    ]).then((installed) => {
-      if (disposed) installed.forEach((unlisten) => unlisten());
-      else unlisteners.push(...installed);
-    });
-    void loadAibbProfile().then((loadedProfile) => {
-      if (!disposed) {
-        setProfile((current) =>
-          loadedProfile.version >= current.version ? loadedProfile : current,
-        );
+    const installListener = (registration: Promise<() => void>) => {
+      void registration
+        .then((unlisten) => {
+          if (disposed) unlisten();
+          else unlisteners.push(unlisten);
+        })
+        .catch(() => {});
+    };
+    installListener(listenProfileUpdated((updatedProfile) => {
+      setProfile((current) =>
+        updatedProfile.version >= current.version ? updatedProfile : current,
+      );
+    }));
+    installListener(listenExplorationProgress((event) => {
+      if (isActiveExploration(event.status)) {
+        dispatchPet({ type: "EXPLORATION_STARTED", taskId: event.taskId });
       }
-    });
+    }));
+    installListener(listenExplorationComplete((event) => {
+      dispatchPet({ type: "EXPLORATION_COMPLETED", taskId: event.taskId });
+    }));
+    installListener(listenExplorationError((event) => {
+      dispatchPet({ type: "EXPLORATION_FAILED", taskId: event.taskId });
+    }));
+    void loadAibbProfile()
+      .then((loadedProfile) => {
+        if (!disposed) {
+          setProfile((current) =>
+            loadedProfile.version >= current.version ? loadedProfile : current,
+          );
+        }
+      })
+      .catch(() => {});
     return () => {
       disposed = true;
       clearLongPressTimer();

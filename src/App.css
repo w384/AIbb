@@ -295,6 +295,22 @@ img.aibb-avatar {
   font-size: 11px;
 }
 
+.message-identity {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.message-avatar {
+  display: grid;
+  width: 22px;
+  height: 22px;
+  padding: 1px;
+  border: 1px solid rgb(92 116 164 / 22%);
+  border-radius: 50%;
+  background: #fff;
+}
+
 .message {
   margin: 0;
   padding: 11px 14px;

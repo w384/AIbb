@@ -115,6 +115,24 @@ describe("PetSurface", () => {
     );
   });
 
+  it("cleans up a resolved profile listener when another listener rejects", async () => {
+    vi.mocked(listenExplorationProgress).mockRejectedValueOnce(new Error("registration failed"));
+    const view = render(<PetSurface status="idle" />);
+
+    await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    await waitFor(() => expect(petUnlisteners[0]).toHaveBeenCalledTimes(1));
+  });
+
+  it("keeps the default identity when profile loading fails", async () => {
+    vi.mocked(loadAibbProfile).mockRejectedValueOnce(new Error("profile unavailable"));
+    const view = render(<PetSurface status="idle" />);
+
+    await waitFor(() => expect(loadAibbProfile).toHaveBeenCalledTimes(1));
+    expect(within(view.container).getByRole("button", { name: "AIbb" })).toBeVisible();
+  });
+
   it("tracks real exploration events and resets returned only after chat opens", async () => {
     const view = render(<PetSurface status="idle" />);
     await waitFor(() => expect(listenExplorationProgress).toHaveBeenCalled());
