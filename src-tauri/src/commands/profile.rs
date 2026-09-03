@@ -22,7 +22,7 @@ pub async fn save_aibb_name(
     name: String,
 ) -> Result<AibbProfile, AppError> {
     let profile = state.settings.save_aibb_name(name).await?;
-    publish_profile_updated(&app, &profile)?;
+    publish_profile_updated(&app, &profile);
     Ok(profile)
 }
 
@@ -34,7 +34,7 @@ pub async fn save_aibb_avatar(
     mime_type: String,
 ) -> Result<AibbProfile, AppError> {
     let profile = state.settings.save_aibb_avatar(bytes, mime_type).await?;
-    publish_profile_updated(&app, &profile)?;
+    publish_profile_updated(&app, &profile);
     Ok(profile)
 }
 
@@ -44,26 +44,28 @@ pub async fn reset_aibb_avatar(
     state: tauri::State<'_, AppState>,
 ) -> Result<AibbProfile, AppError> {
     let profile = state.settings.reset_aibb_avatar().await?;
-    publish_profile_updated(&app, &profile)?;
+    publish_profile_updated(&app, &profile);
     Ok(profile)
 }
 
-pub(crate) fn publish_profile_updated<R: Runtime>(
-    app: &AppHandle<R>,
-    profile: &AibbProfile,
-) -> Result<(), AppError> {
-    for update in profile_window_updates(profile) {
+pub(crate) fn publish_profile_updated<R: Runtime>(app: &AppHandle<R>, profile: &AibbProfile) {
+    dispatch_profile_updates(profile, |update| {
         let Some(window) = app.get_webview_window(update.label) else {
-            continue;
+            return Ok::<(), ()>(());
         };
-        window
-            .set_title(&update.title)
-            .map_err(|_| profile_window_error())?;
-        window
-            .emit(PROFILE_UPDATED_EVENT, update.payload.clone())
-            .map_err(|_| profile_window_error())?;
+        let _ = window.set_title(&update.title);
+        let _ = window.emit(PROFILE_UPDATED_EVENT, update.payload.clone());
+        Ok(())
+    });
+}
+
+pub(crate) fn dispatch_profile_updates<E>(
+    profile: &AibbProfile,
+    mut dispatch: impl FnMut(&ProfileWindowUpdate<'_>) -> Result<(), E>,
+) {
+    for update in profile_window_updates(profile) {
+        let _ = dispatch(&update);
     }
-    Ok(())
 }
 
 pub(crate) fn profile_window_updates(profile: &AibbProfile) -> [ProfileWindowUpdate<'_>; 3] {
@@ -84,11 +86,4 @@ pub(crate) fn profile_window_updates(profile: &AibbProfile) -> [ProfileWindowUpd
             payload: profile,
         },
     ]
-}
-
-fn profile_window_error() -> AppError {
-    AppError::new(
-        "profileWindowUpdateFailed",
-        "The AIbb profile could not be synchronized to application windows.",
-    )
 }

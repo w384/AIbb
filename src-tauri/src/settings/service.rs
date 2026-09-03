@@ -13,8 +13,8 @@ use crate::{
 
 use super::{
     profile::{
-        load_avatar_data_url, remove_avatar, validate_aibb_name, validate_avatar,
-        write_avatar_atomically,
+        avatar_data_url, load_avatar_data_url, normalize_avatar, validate_aibb_name,
+        AvatarFileTransaction,
     },
     CredentialStore,
 };
@@ -127,8 +127,13 @@ impl SettingsService {
     pub async fn save_aibb_name(&self, name: String) -> Result<AibbProfile, AppError> {
         let _operation = self.operation.lock().await;
         let name = validate_aibb_name(name)?;
-        self.database.save_aibb_name(&name)?;
-        self.load_aibb_profile_unlocked()
+        let previous = self.load_aibb_profile_unlocked()?;
+        let version = self.database.save_aibb_name(&name)?;
+        Ok(AibbProfile {
+            name,
+            avatar_data_url: previous.avatar_data_url,
+            version,
+        })
     }
 
     pub async fn save_aibb_avatar(
@@ -137,17 +142,42 @@ impl SettingsService {
         mime_type: String,
     ) -> Result<AibbProfile, AppError> {
         let _operation = self.operation.lock().await;
-        validate_avatar(&bytes, &mime_type)?;
-        write_avatar_atomically(self.profile_directory()?, &bytes)?;
-        self.database.set_aibb_avatar_present(true)?;
-        self.load_aibb_profile_unlocked()
+        let normalized = normalize_avatar(&bytes, &mime_type)?;
+        let previous = self.load_aibb_profile_unlocked()?;
+        let transaction =
+            AvatarFileTransaction::replace(self.profile_directory()?, Some(&normalized))?;
+        let version = match self.database.set_aibb_avatar_present(true) {
+            Ok(version) => version,
+            Err(error) => {
+                transaction.rollback()?;
+                return Err(error);
+            }
+        };
+        transaction.commit();
+        Ok(AibbProfile {
+            name: previous.name,
+            avatar_data_url: Some(avatar_data_url(&normalized)),
+            version,
+        })
     }
 
     pub async fn reset_aibb_avatar(&self) -> Result<AibbProfile, AppError> {
         let _operation = self.operation.lock().await;
-        remove_avatar(self.profile_directory()?)?;
-        self.database.set_aibb_avatar_present(false)?;
-        self.load_aibb_profile_unlocked()
+        let previous = self.load_aibb_profile_unlocked()?;
+        let transaction = AvatarFileTransaction::replace(self.profile_directory()?, None)?;
+        let version = match self.database.set_aibb_avatar_present(false) {
+            Ok(version) => version,
+            Err(error) => {
+                transaction.rollback()?;
+                return Err(error);
+            }
+        };
+        transaction.commit();
+        Ok(AibbProfile {
+            name: previous.name,
+            avatar_data_url: None,
+            version,
+        })
     }
 
     pub async fn exploration_task_snapshot(&self) -> Result<ExplorationTaskSnapshot, AppError> {

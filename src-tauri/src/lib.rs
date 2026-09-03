@@ -113,7 +113,9 @@ mod tests {
     use std::{fs, path::Path};
 
     use crate::{
-        commands::profile::{profile_window_updates, PROFILE_UPDATED_EVENT},
+        commands::profile::{
+            dispatch_profile_updates, profile_window_updates, PROFILE_UPDATED_EVENT,
+        },
         domain::AibbProfile,
         exploration::{ExplorationEvent, ExplorationStatus},
     };
@@ -263,6 +265,23 @@ mod tests {
                 })
             );
         }
+    }
+
+    #[test]
+    fn profile_ui_propagation_failures_are_best_effort_after_persistence() {
+        let profile = AibbProfile {
+            name: "小团子".into(),
+            avatar_data_url: None,
+            version: 8,
+        };
+        let mut attempted = Vec::new();
+
+        dispatch_profile_updates(&profile, |update| {
+            attempted.push(update.label);
+            Err::<(), ()>(())
+        });
+
+        assert_eq!(attempted, vec!["pet", "chat", "settings"]);
     }
 
     #[test]

@@ -113,26 +113,27 @@ impl Database {
             .map_err(|_| storage_error())
     }
 
-    pub fn save_aibb_name(&self, name: &str) -> Result<(), AppError> {
+    pub fn save_aibb_name(&self, name: &str) -> Result<i64, AppError> {
         self.connection()?
-            .execute(
+            .query_row(
                 "UPDATE app_settings SET aibb_name = ?1, profile_version = profile_version + 1 \
-                 WHERE singleton = 1",
+                 WHERE singleton = 1 RETURNING profile_version",
                 params![name],
+                |row| row.get(0),
             )
-            .map(|_| ())
             .map_err(|_| storage_error())
     }
 
-    pub fn set_aibb_avatar_present(&self, present: bool) -> Result<(), AppError> {
+    pub fn set_aibb_avatar_present(&self, present: bool) -> Result<i64, AppError> {
         let avatar_filename = present.then_some("avatar.webp");
         self.connection()?
-            .execute(
+            .query_row(
                 "UPDATE app_settings SET avatar_filename = ?1, \
-                 profile_version = profile_version + 1 WHERE singleton = 1",
+                 profile_version = profile_version + 1 WHERE singleton = 1 \
+                 RETURNING profile_version",
                 params![avatar_filename],
+                |row| row.get(0),
             )
-            .map(|_| ())
             .map_err(|_| storage_error())
     }
 

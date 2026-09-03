@@ -36,6 +36,7 @@ scraper = "0.24.0"
 ipnet = "2.11.0"
 encoding_rs = "0.8.35"
 base64 = "0.22.1"
+image = { version = "0.25.8", default-features = false, features = ["jpeg", "png", "webp"] }
 
 [target.'cfg(any(target_os = "macos", windows, target_os = "linux"))'.dependencies]
 tauri-plugin-single-instance = "2"

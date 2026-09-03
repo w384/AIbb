@@ -1,4 +1,4 @@
-use std::{fs, path::PathBuf, sync::Arc};
+use std::{fs, io::Cursor, path::PathBuf, sync::Arc};
 
 use aibb_desktop_pet_lib::{
     app_state::AppState,
@@ -11,6 +11,8 @@ use aibb_desktop_pet_lib::{
     storage::Database,
 };
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use image::{DynamicImage, GenericImageView, ImageBuffer, ImageFormat, Rgb, Rgba};
 use tempfile::TempDir;
 use tokio::{
     sync::{Mutex, Notify},
@@ -177,10 +179,185 @@ impl TestDatabase {
     fn app_data_dir(&self) -> &std::path::Path {
         self._directory.path()
     }
+
+    fn persisted_profile(&self) -> (String, Option<String>, i64) {
+        rusqlite::Connection::open(self.path())
+            .unwrap()
+            .query_row(
+                "SELECT aibb_name, avatar_filename, profile_version \
+                 FROM app_settings WHERE singleton = 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .unwrap()
+    }
+
+    fn reject_avatar_metadata_updates(&self) {
+        rusqlite::Connection::open(self.path())
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_avatar_metadata_update \
+                 BEFORE UPDATE OF avatar_filename ON app_settings \
+                 BEGIN SELECT RAISE(FAIL, 'forced avatar metadata failure'); END;",
+            )
+            .unwrap();
+    }
 }
 
 fn valid_webp_bytes() -> Vec<u8> {
-    b"RIFF\x0c\x00\x00\x00WEBPVP8 \x00\x00\x00\x00".to_vec()
+    encoded_test_image(ImageFormat::WebP)
+}
+
+fn encoded_test_image(format: ImageFormat) -> Vec<u8> {
+    let image = match format {
+        ImageFormat::Jpeg => {
+            DynamicImage::ImageRgb8(ImageBuffer::from_pixel(2, 2, Rgb([32_u8, 96, 192])))
+        }
+        _ => DynamicImage::ImageRgba8(ImageBuffer::from_pixel(2, 2, Rgba([32_u8, 96, 192, 255]))),
+    };
+    let mut bytes = Cursor::new(Vec::new());
+    image.write_to(&mut bytes, format).unwrap();
+    bytes.into_inner()
+}
+
+fn avatar_webp_bytes(profile: &AibbProfile) -> Vec<u8> {
+    let data_url = profile.avatar_data_url.as_deref().unwrap();
+    let encoded = data_url.strip_prefix("data:image/webp;base64,").unwrap();
+    BASE64_STANDARD.decode(encoded).unwrap()
+}
+
+#[tokio::test]
+async fn profile_rejects_fake_image_bytes_with_an_allowed_mime() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+
+    let error = service
+        .save_aibb_avatar(b"not actually a png".to_vec(), "image/png".into())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "invalidProfile");
+    assert_eq!(db.persisted_profile(), ("AIbb".into(), None, 0));
+    assert!(!db.app_data_dir().join("aibb-profile/avatar.webp").exists());
+}
+
+#[tokio::test]
+async fn profile_png_and_jpeg_inputs_are_returned_as_decodable_webp() {
+    for (mime_type, format) in [
+        ("image/png", ImageFormat::Png),
+        ("image/jpeg", ImageFormat::Jpeg),
+    ] {
+        let db = TestDatabase::new();
+        let service = SettingsService::new_with_app_data_dir(
+            db.handle(),
+            FakeCredentialStore::default(),
+            db.app_data_dir(),
+        );
+
+        let profile = service
+            .save_aibb_avatar(encoded_test_image(format), mime_type.into())
+            .await
+            .unwrap();
+        let webp = avatar_webp_bytes(&profile);
+        let decoded = image::load_from_memory_with_format(&webp, ImageFormat::WebP).unwrap();
+
+        assert_eq!(decoded.dimensions(), (2, 2));
+        assert_eq!(
+            fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
+            webp
+        );
+    }
+}
+
+#[tokio::test]
+async fn profile_avatar_database_failure_restores_the_previous_file_and_profile() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    let previous = service
+        .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
+        .await
+        .unwrap();
+    let previous_file = fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap();
+    let previous_row = db.persisted_profile();
+    db.reject_avatar_metadata_updates();
+
+    let error = service
+        .save_aibb_avatar(encoded_test_image(ImageFormat::Png), "image/png".into())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "storageUnavailable");
+    assert_eq!(db.persisted_profile(), previous_row);
+    assert_eq!(
+        fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
+        previous_file
+    );
+    assert_eq!(service.load_aibb_profile().await.unwrap(), previous);
+}
+
+#[tokio::test]
+async fn profile_avatar_reset_database_failure_restores_the_previous_avatar() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    let previous = service
+        .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
+        .await
+        .unwrap();
+    let previous_file = fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap();
+    let previous_row = db.persisted_profile();
+    db.reject_avatar_metadata_updates();
+
+    let error = service.reset_aibb_avatar().await.unwrap_err();
+
+    assert_eq!(error.code, "storageUnavailable");
+    assert_eq!(db.persisted_profile(), previous_row);
+    assert_eq!(
+        fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
+        previous_file
+    );
+    assert_eq!(service.load_aibb_profile().await.unwrap(), previous);
+}
+
+#[tokio::test]
+async fn profile_required_load_failure_precedes_name_persistence() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    service
+        .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
+        .await
+        .unwrap();
+    let oversized = vec![7_u8; 5 * 1024 * 1024 + 1];
+    fs::write(
+        db.app_data_dir().join("aibb-profile/avatar.webp"),
+        &oversized,
+    )
+    .unwrap();
+    let previous_row = db.persisted_profile();
+
+    let error = service.save_aibb_name("新名字".into()).await.unwrap_err();
+
+    assert_eq!(error.code, "profileStorageUnavailable");
+    assert_eq!(db.persisted_profile(), previous_row);
+    assert_eq!(
+        fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
+        oversized
+    );
 }
 
 #[tokio::test]
@@ -203,10 +380,8 @@ async fn profile_avatar_import_is_app_owned_and_path_free() {
         .as_deref()
         .unwrap()
         .starts_with("data:image/webp;base64,"));
-    assert_eq!(
-        fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
-        avatar
-    );
+    let stored_avatar = fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap();
+    image::load_from_memory_with_format(&stored_avatar, ImageFormat::WebP).unwrap();
     let stored_filename: Option<String> = rusqlite::Connection::open(db.path())
         .unwrap()
         .query_row(
@@ -218,8 +393,8 @@ async fn profile_avatar_import_is_app_owned_and_path_free() {
     assert_eq!(stored_filename.as_deref(), Some("avatar.webp"));
     let database_bytes = db.raw_bytes();
     assert!(!database_bytes
-        .windows(avatar.len())
-        .any(|window| window == avatar));
+        .windows(stored_avatar.len())
+        .any(|window| window == stored_avatar));
     assert!(!database_bytes
         .windows(b"C:\\Users\\face.png".len())
         .any(|window| window == b"C:\\Users\\face.png"));
@@ -238,6 +413,7 @@ async fn profile_invalid_avatar_keeps_the_previous_avatar() {
         .save_aibb_avatar(avatar.clone(), "image/webp".into())
         .await
         .unwrap();
+    let previous_file = fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap();
 
     let invalid_mime = service
         .save_aibb_avatar(b"not an image".to_vec(), "text/plain".into())
@@ -253,7 +429,7 @@ async fn profile_invalid_avatar_keeps_the_previous_avatar() {
     assert_eq!(service.load_aibb_profile().await.unwrap(), seeded);
     assert_eq!(
         fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
-        avatar
+        previous_file
     );
 }
 
@@ -266,7 +442,7 @@ async fn profile_avatar_reset_removes_the_app_owned_file() {
         db.app_data_dir(),
     );
     service
-        .save_aibb_avatar(valid_webp_bytes(), "image/jpeg".into())
+        .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
         .await
         .unwrap();
 
