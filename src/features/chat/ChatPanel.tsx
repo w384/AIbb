@@ -6,12 +6,14 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
-import type { AppErrorPayload, BootstrapState } from "../../contracts";
+import type { AibbProfile, AppErrorPayload, BootstrapState } from "../../contracts";
 import {
   getBootstrapState,
+  loadAibbProfile,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenProfileUpdated,
   openSettingsWindow,
   submitUserInput,
 } from "../../lib/tauri";
@@ -19,6 +21,11 @@ import { ExplorationPanel } from "../exploration/ExplorationPanel";
 
 const FIRST_RUN_GREETING =
   "你好！我是喜欢出去玩耍的快乐 AIbb。先配置一个大模型 API，我们再聊天吧。";
+const DEFAULT_PROFILE: AibbProfile = {
+  name: "AIbb",
+  avatarDataUrl: null,
+  version: 0,
+};
 
 interface ChatMessageView {
   id: string;
@@ -49,14 +56,14 @@ function publicError(error: unknown): AppErrorPayload {
   return { code: "request_failed", message: "操作失败。" };
 }
 
-function ChatHeader() {
+function ChatHeader({ profile }: { profile: AibbProfile }) {
   return (
     <header className="chat-header">
       <span className="chat-avatar">
-        <AibbAvatar />
+        <AibbAvatar avatarDataUrl={profile.avatarDataUrl} name={profile.name} />
       </span>
       <div className="chat-identity">
-        <h1>AIbb</h1>
+        <h1>{profile.name}</h1>
         <p><span className="online-dot" aria-hidden="true" />准备出去玩</p>
       </div>
       <button
@@ -75,6 +82,7 @@ function ChatHeader() {
 
 export function ChatPanel() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
+  const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<ChatMessageView[]>([]);
   const [streamingReply, setStreamingReply] = useState("");
@@ -88,6 +96,11 @@ export function ChatPanel() {
     const unlisteners: Array<() => void> = [];
     const install = async () => {
       const installed = await Promise.all([
+        listenProfileUpdated((updatedProfile) => {
+          setProfile((current) =>
+            updatedProfile.version >= current.version ? updatedProfile : current,
+          );
+        }),
         listenChatDelta((event) => {
           if (event.requestId === activeRequest.current) {
             setStreamingReply((reply) => reply + event.delta);
@@ -115,6 +128,13 @@ export function ChatPanel() {
       else unlisteners.push(...installed);
     };
     void install();
+    void loadAibbProfile().then((loadedProfile) => {
+      if (!disposed) {
+        setProfile((current) =>
+          loadedProfile.version >= current.version ? loadedProfile : current,
+        );
+      }
+    });
     void getBootstrapState()
       .then((state) => {
         if (!disposed) setBootstrap(state);
@@ -173,12 +193,12 @@ export function ChatPanel() {
   }
 
   if (!bootstrap && !error) {
-    return <main className="panel chat-panel">正在唤醒 AIbb…</main>;
+    return <main className="panel chat-panel">正在唤醒 {profile.name}…</main>;
   }
   if (bootstrap && !bootstrap.apiConfigured) {
     return (
-      <main className="panel chat-panel" aria-label="AIbb 聊天">
-        <ChatHeader />
+      <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
+        <ChatHeader profile={profile} />
         <section className="first-run-card">
           <span className="first-run-sparkle" aria-hidden="true">✦</span>
           <h2>你好呀！</h2>
@@ -198,8 +218,8 @@ export function ChatPanel() {
   }
 
   return (
-    <main className="panel chat-panel" aria-label="AIbb 聊天">
-      <ChatHeader />
+    <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
+      <ChatHeader profile={profile} />
       <section className="conversation" aria-live="polite">
         {messages.length === 0 && !activeRequestId && !explorationTaskId && (
           <div className="chat-welcome">
@@ -210,13 +230,13 @@ export function ChatPanel() {
         )}
         {messages.map((message) => (
           <article key={message.id} className={`message-row ${message.role}`}>
-            <span className="message-author">{message.role === "assistant" ? "AIbb" : "你"}</span>
+            <span className="message-author">{message.role === "assistant" ? profile.name : "你"}</span>
             <p className="message">{message.content}</p>
           </article>
         ))}
         {activeRequestId && (
           <article className="message-row assistant">
-            <span className="message-author">AIbb</span>
+            <span className="message-author">{profile.name}</span>
             <p className="message thinking" data-testid="streaming-reply">
               {streamingReply || <><span className="thinking-dot" />正在想…</>}
             </p>
@@ -235,7 +255,7 @@ export function ChatPanel() {
           <span className="sr-only">消息</span>
           <textarea
             aria-label="消息"
-            placeholder="和 AIbb 说点什么…"
+            placeholder={`和 ${profile.name} 说点什么…`}
             rows={1}
             value={input}
             onChange={(event) => setInput(event.target.value)}

@@ -8,10 +8,13 @@ import {
 } from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
 import type {
+  AibbProfile,
   ExplorationStatus,
   PetStatus,
 } from "../../contracts";
 import {
+  loadAibbProfile,
+  listenProfileUpdated,
   listenExplorationComplete,
   listenExplorationError,
   listenExplorationProgress,
@@ -30,6 +33,11 @@ interface PetSurfaceProps {
 
 const LONG_PRESS_MS = 100;
 const DRAG_DISTANCE_PX = 3;
+const DEFAULT_PROFILE: AibbProfile = {
+  name: "AIbb",
+  avatarDataUrl: null,
+  version: 0,
+};
 
 interface PressOrigin {
   pointerId: number;
@@ -43,6 +51,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
     status,
   });
   const [chatOpenError, setChatOpenError] = useState<string | null>(null);
+  const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
   const longPressTimer = useRef<number | null>(null);
   const activePointer = useRef<number | null>(null);
   const pressOrigin = useRef<PressOrigin | null>(null);
@@ -52,6 +61,11 @@ export function PetSurface({ status }: PetSurfaceProps) {
     let disposed = false;
     const unlisteners: Array<() => void> = [];
     void Promise.all([
+      listenProfileUpdated((updatedProfile) => {
+        setProfile((current) =>
+          updatedProfile.version >= current.version ? updatedProfile : current,
+        );
+      }),
       listenExplorationProgress((event) => {
         if (isActiveExploration(event.status)) {
           dispatchPet({ type: "EXPLORATION_STARTED", taskId: event.taskId });
@@ -66,6 +80,13 @@ export function PetSurface({ status }: PetSurfaceProps) {
     ]).then((installed) => {
       if (disposed) installed.forEach((unlisten) => unlisten());
       else unlisteners.push(...installed);
+    });
+    void loadAibbProfile().then((loadedProfile) => {
+      if (!disposed) {
+        setProfile((current) =>
+          loadedProfile.version >= current.version ? loadedProfile : current,
+        );
+      }
     });
     return () => {
       disposed = true;
@@ -171,7 +192,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
       )}
       {chatOpenError && <p className="pet-error" role="alert">{chatOpenError}</p>}
       <button
-        aria-label="AIbb"
+        aria-label={profile.name}
         className="pet"
         tabIndex={-1}
         title="短按对话，长按拖动，右键设置"
@@ -190,7 +211,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
         onPointerMove={handlePointerMove}
         onPointerUp={finishPointer}
       >
-        <AibbAvatar />
+        <AibbAvatar avatarDataUrl={profile.avatarDataUrl} name={profile.name} />
       </button>
     </main>
   );

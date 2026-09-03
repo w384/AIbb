@@ -1,10 +1,11 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
 import {
   clearMemory,
   exitApp,
   loadAibbProfile,
+  listenProfileUpdated,
   loadSettings,
   resetAibbAvatar,
   saveAibbAvatar,
@@ -14,10 +15,17 @@ import {
 } from "../../lib/tauri";
 import { normalizeAvatarFile } from "../profile/avatarImage";
 
+let profileListener: (profile: { name: string; avatarDataUrl: string | null; version: number }) => void;
+const unlistenProfile = vi.fn();
+
 vi.mock("../../lib/tauri", () => ({
   clearMemory: vi.fn(),
   exitApp: vi.fn(),
   loadAibbProfile: vi.fn(),
+  listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
+    profileListener = listener;
+    return unlistenProfile;
+  }),
   loadSettings: vi.fn(),
   resetAibbAvatar: vi.fn(),
   saveAibbAvatar: vi.fn(),
@@ -79,6 +87,45 @@ describe("SettingsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "保存 AIbb 资料" }));
 
     await waitFor(() => expect(saveAibbName).toHaveBeenCalledWith("小团子"));
+  });
+
+  it("accepts only a newer external profile update", async () => {
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "本地资料",
+      avatarDataUrl: null,
+      version: 3,
+    });
+    render(<SettingsPanel />);
+
+    await screen.findByLabelText("AIbb 昵称");
+    await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
+    act(() => profileListener({
+      name: "旧资料",
+      avatarDataUrl: null,
+      version: 3,
+    }));
+    expect(screen.getByLabelText("AIbb 昵称")).toHaveValue("本地资料");
+
+    act(() => profileListener({
+      name: "小团子",
+      avatarDataUrl: "data:image/webp;base64,AA==",
+      version: 4,
+    }));
+    expect(screen.getByLabelText("AIbb 昵称")).toHaveValue("小团子");
+    expect(screen.getByRole("img", { name: "小团子" })).toHaveAttribute(
+      "src",
+      "data:image/webp;base64,AA==",
+    );
+  });
+
+  it("unregisters its profile listener on unmount", async () => {
+    const view = render(<SettingsPanel />);
+
+    await screen.findByLabelText("AIbb 昵称");
+    await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
+    view.unmount();
+
+    expect(unlistenProfile).toHaveBeenCalledTimes(1);
   });
 
   it("does not change the displayed or persisted nickname when avatar save fails", async () => {

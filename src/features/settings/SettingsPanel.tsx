@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
 import type { AibbProfile, ApiSettings, AppErrorPayload, SaveSettings, WebMode } from "../../contracts";
 import {
@@ -6,6 +6,7 @@ import {
   exitApp,
   loadAibbProfile,
   loadSettings,
+  listenProfileUpdated,
   resetAibbAvatar,
   saveAibbAvatar,
   saveAibbName,
@@ -69,6 +70,7 @@ function publicError(reason: unknown): AppErrorPayload {
 export function SettingsPanel() {
   const [settings, setSettings] = useState<ApiSettings>(EMPTY_SETTINGS);
   const [profile, setProfile] = useState<AibbProfile>(EMPTY_PROFILE);
+  const profileRef = useRef(EMPTY_PROFILE);
   const [profileName, setProfileName] = useState(EMPTY_PROFILE.name);
   const [pendingAvatar, setPendingAvatar] = useState<NormalizedAvatarImage | null>(null);
   const [pendingAvatarDataUrl, setPendingAvatarDataUrl] = useState<string | null>(null);
@@ -83,6 +85,7 @@ export function SettingsPanel() {
 
   useEffect(() => {
     let disposed = false;
+    let unlistenProfileUpdated: (() => void) | undefined;
     void loadSettings()
       .then((loadedSettings) => {
         if (!disposed) {
@@ -99,18 +102,33 @@ export function SettingsPanel() {
       });
     void loadAibbProfile()
       .then((loadedProfile) => {
-        if (!disposed) {
-          setProfile(loadedProfile);
-          setProfileName(loadedProfile.name);
+        if (!disposed && loadedProfile.version >= profileRef.current.version) {
+          applyCurrentProfile(loadedProfile);
         }
       })
       .catch((reason: unknown) => {
         if (!disposed) setProfileError(publicError(reason));
       });
+    void listenProfileUpdated((updatedProfile) => {
+      if (updatedProfile.version > profileRef.current.version) {
+        applyCurrentProfile(updatedProfile);
+      }
+    }).then((unlisten) => {
+      if (disposed) unlisten();
+      else unlistenProfileUpdated = unlisten;
+    });
     return () => {
       disposed = true;
+      unlistenProfileUpdated?.();
     };
   }, []);
+
+  function applyCurrentProfile(nextProfile: AibbProfile) {
+    profileRef.current = nextProfile;
+    setProfile(nextProfile);
+    setProfileName(nextProfile.name);
+    clearPendingAvatar();
+  }
 
   async function save(event: FormEvent) {
     event.preventDefault();
@@ -212,14 +230,10 @@ export function SettingsPanel() {
         }
         try {
           const savedProfile = await saveAibbName(profileName.trim());
-          setProfile(savedProfile);
-          setProfileName(savedProfile.name);
-          clearPendingAvatar();
+          applyCurrentProfile(savedProfile);
           setNotice("AIbb 资料已保存");
         } catch {
-          setProfile(avatarSaved);
-          setProfileName(avatarSaved.name);
-          clearPendingAvatar();
+          applyCurrentProfile(avatarSaved);
           setProfileError({
             code: "profilePartiallySaved",
             message: "头像已保存，昵称未保存。请重新输入昵称后重试。",
@@ -228,8 +242,7 @@ export function SettingsPanel() {
         return;
       }
       const savedProfile = await saveAibbName(profileName.trim());
-      setProfile(savedProfile);
-      setProfileName(savedProfile.name);
+      applyCurrentProfile(savedProfile);
       setNotice("AIbb 资料已保存");
     } catch (reason) {
       restoreProfileDraft();
@@ -246,9 +259,7 @@ export function SettingsPanel() {
     setProfileInFlight(true);
     try {
       const savedProfile = await resetAibbAvatar();
-      setProfile(savedProfile);
-      setProfileName(savedProfile.name);
-      clearPendingAvatar();
+      applyCurrentProfile(savedProfile);
       setNotice("已恢复 AIbb 默认头像");
     } catch (reason) {
       setProfileError(publicError(reason));

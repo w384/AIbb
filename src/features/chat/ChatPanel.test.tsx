@@ -8,9 +8,11 @@ import type {
 import { ChatPanel } from "./ChatPanel";
 import {
   getBootstrapState,
+  loadAibbProfile,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenProfileUpdated,
   openSettingsWindow,
   submitUserInput,
 } from "../../lib/tauri";
@@ -19,12 +21,15 @@ type Listener<T> = (payload: T) => void;
 let deltaListener: Listener<ChatDeltaEvent>;
 let completeListener: Listener<ChatCompleteEvent>;
 let errorListener: Listener<ChatErrorEvent>;
+let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
 const unlistenDelta = vi.fn();
 const unlistenComplete = vi.fn();
 const unlistenError = vi.fn();
+const unlistenProfile = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
   getBootstrapState: vi.fn(),
+  loadAibbProfile: vi.fn(),
   openSettingsWindow: vi.fn(),
   submitUserInput: vi.fn(),
   listenChatDelta: vi.fn(async (listener: Listener<ChatDeltaEvent>) => {
@@ -39,6 +44,10 @@ vi.mock("../../lib/tauri", () => ({
     errorListener = listener;
     return unlistenError;
   }),
+  listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
+    profileListener = listener;
+    return unlistenProfile;
+  }),
 }));
 
 const mockBootstrap = vi.mocked(getBootstrapState);
@@ -47,6 +56,11 @@ const mockSubmit = vi.mocked(submitUserInput);
 describe("ChatPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "AIbb",
+      avatarDataUrl: null,
+      version: 0,
+    });
     mockBootstrap.mockResolvedValue({
       firstRun: false,
       apiConfigured: true,
@@ -134,7 +148,36 @@ describe("ChatPanel", () => {
       expect(unlistenDelta).toHaveBeenCalledTimes(1);
       expect(unlistenComplete).toHaveBeenCalledTimes(1);
       expect(unlistenError).toHaveBeenCalledTimes(1);
+      expect(unlistenProfile).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("renames existing assistant messages after a profile update", async () => {
+    mockSubmit.mockImplementation(async (_message, id) => ({
+      kind: "chatStarted",
+      requestId: id,
+    }));
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "你好" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+
+    act(() => completeListener({ requestId: mockSubmit.mock.calls[0][1], message: "旧消息正文" }));
+    await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
+    act(() => profileListener({
+      name: "小团子",
+      avatarDataUrl: "data:image/webp;base64,AA==",
+      version: 2,
+    }));
+
+    expect(screen.getByRole("heading", { name: "小团子" })).toBeVisible();
+    expect(screen.getByRole("img", { name: "小团子" })).toHaveAttribute(
+      "src",
+      "data:image/webp;base64,AA==",
+    );
+    expect(screen.getByText("小团子", { selector: ".message-author" })).toBeVisible();
+    expect(screen.getByText("旧消息正文")).toBeVisible();
   });
 
   it("shows a stable scoped streaming error and leaves the composer usable", async () => {

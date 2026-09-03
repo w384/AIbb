@@ -5,6 +5,8 @@ import {
   openSettingsWindow,
   startPetDrag,
   toggleChatWindow,
+  loadAibbProfile,
+  listenProfileUpdated,
   listenExplorationComplete,
   listenExplorationError,
   listenExplorationProgress,
@@ -19,23 +21,29 @@ type Listener<T> = (payload: T) => void;
 let progressListener: Listener<ExplorationProgressEvent>;
 let completeListener: Listener<ExplorationCompleteEvent>;
 let errorListener: Listener<ExplorationErrorEvent>;
-const petUnlisteners = [vi.fn(), vi.fn(), vi.fn()];
+let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
+const petUnlisteners = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
 
 vi.mock("../../lib/tauri", () => ({
   openSettingsWindow: vi.fn(),
   startPetDrag: vi.fn(),
   toggleChatWindow: vi.fn(),
+  loadAibbProfile: vi.fn(),
+  listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
+    profileListener = listener;
+    return petUnlisteners[0];
+  }),
   listenExplorationProgress: vi.fn(async (listener: Listener<ExplorationProgressEvent>) => {
     progressListener = listener;
-    return petUnlisteners[0];
+    return petUnlisteners[1];
   }),
   listenExplorationComplete: vi.fn(async (listener: Listener<ExplorationCompleteEvent>) => {
     completeListener = listener;
-    return petUnlisteners[1];
+    return petUnlisteners[2];
   }),
   listenExplorationError: vi.fn(async (listener: Listener<ExplorationErrorEvent>) => {
     errorListener = listener;
-    return petUnlisteners[2];
+    return petUnlisteners[3];
   }),
 }));
 
@@ -46,6 +54,11 @@ const mockToggleChat = vi.mocked(toggleChatWindow);
 describe("PetSurface", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "AIbb",
+      avatarDataUrl: null,
+      version: 0,
+    });
   });
 
   afterEach(() => {
@@ -82,6 +95,23 @@ describe("PetSurface", () => {
 
     expect(within(view.container).getByRole("status")).toHaveTextContent(
       "我回来啦，点我看结果",
+    );
+  });
+
+  it("updates the pet avatar and accessible name after profile update", async () => {
+    const view = render(<PetSurface status="idle" />);
+
+    await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
+    act(() => profileListener({
+      name: "小团子",
+      avatarDataUrl: "data:image/webp;base64,AA==",
+      version: 2,
+    }));
+
+    expect(within(view.container).getByRole("button", { name: "小团子" })).toBeVisible();
+    expect(within(view.container).getByRole("img", { name: "小团子" })).toHaveAttribute(
+      "src",
+      "data:image/webp;base64,AA==",
     );
   });
 
