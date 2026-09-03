@@ -148,7 +148,10 @@ describe("PetSurface", () => {
         taskId: "other",
         result: {
           items: ["甲", "乙", "丙", "丁"],
-          nextOutingRequest: "再去玩",
+          diary: "回来啦",
+          sources: [],
+          roundNumber: 1,
+          elapsedSeconds: 1,
           rawResponse: "safe",
         },
       }),
@@ -159,7 +162,10 @@ describe("PetSurface", () => {
         taskId: "task-1",
         result: {
           items: ["甲", "乙", "丙", "丁"],
-          nextOutingRequest: "再去玩",
+          diary: "回来啦",
+          sources: [],
+          roundNumber: 1,
+          elapsedSeconds: 1,
           rawResponse: "safe",
         },
       }),

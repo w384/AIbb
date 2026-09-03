@@ -4,6 +4,9 @@ import type {
   ChatCompleteEvent,
   ChatDeltaEvent,
   ChatErrorEvent,
+  ExplorationCompleteEvent,
+  ExplorationErrorEvent,
+  ExplorationProgressEvent,
 } from "../../contracts";
 import { ChatPanel } from "./ChatPanel";
 import {
@@ -12,6 +15,9 @@ import {
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenExplorationComplete,
+  listenExplorationError,
+  listenExplorationProgress,
   listenProfileUpdated,
   openSettingsWindow,
   submitUserInput,
@@ -21,10 +27,16 @@ type Listener<T> = (payload: T) => void;
 let deltaListener: Listener<ChatDeltaEvent>;
 let completeListener: Listener<ChatCompleteEvent>;
 let errorListener: Listener<ChatErrorEvent>;
+let explorationProgressListener: Listener<ExplorationProgressEvent>;
+let explorationCompleteListener: Listener<ExplorationCompleteEvent>;
+let explorationErrorListener: Listener<ExplorationErrorEvent>;
 let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
 const unlistenDelta = vi.fn();
 const unlistenComplete = vi.fn();
 const unlistenError = vi.fn();
+const unlistenExplorationProgress = vi.fn();
+const unlistenExplorationComplete = vi.fn();
+const unlistenExplorationError = vi.fn();
 const unlistenProfile = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
@@ -44,6 +56,18 @@ vi.mock("../../lib/tauri", () => ({
     errorListener = listener;
     return unlistenError;
   }),
+  listenExplorationProgress: vi.fn(async (listener: Listener<ExplorationProgressEvent>) => {
+    explorationProgressListener = listener;
+    return unlistenExplorationProgress;
+  }),
+  listenExplorationComplete: vi.fn(async (listener: Listener<ExplorationCompleteEvent>) => {
+    explorationCompleteListener = listener;
+    return unlistenExplorationComplete;
+  }),
+  listenExplorationError: vi.fn(async (listener: Listener<ExplorationErrorEvent>) => {
+    explorationErrorListener = listener;
+    return unlistenExplorationError;
+  }),
   listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
     profileListener = listener;
     return unlistenProfile;
@@ -52,6 +76,18 @@ vi.mock("../../lib/tauri", () => ({
 
 const mockBootstrap = vi.mocked(getBootstrapState);
 const mockSubmit = vi.mocked(submitUserInput);
+
+const diaryResult = {
+  items: ["甲", "乙", "丙", "丁"] as [string, string, string, string],
+  diary: "第二轮回来啦",
+  sources: [
+    { title: "可信来源甲", url: "https://example.com/one" },
+    { title: "可信来源乙", url: "https://example.org/two" },
+  ],
+  roundNumber: 2,
+  elapsedSeconds: 17,
+  rawResponse: "[omitted]",
+};
 
 describe("ChatPanel", () => {
   beforeEach(() => {
@@ -148,8 +184,111 @@ describe("ChatPanel", () => {
       expect(unlistenDelta).toHaveBeenCalledTimes(1);
       expect(unlistenComplete).toHaveBeenCalledTimes(1);
       expect(unlistenError).toHaveBeenCalledTimes(1);
+      expect(unlistenExplorationProgress).toHaveBeenCalledTimes(1);
+      expect(unlistenExplorationComplete).toHaveBeenCalledTimes(1);
+      expect(unlistenExplorationError).toHaveBeenCalledTimes(1);
       expect(unlistenProfile).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it("replaces departure progress with an outing diary in the same timeline", async () => {
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "小团子",
+      avatarDataUrl: "data:image/webp;base64,AA==",
+      version: 2,
+    });
+    mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-1" });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    await screen.findByRole("heading", { name: "小团子" });
+    await waitFor(() => {
+      expect(listenExplorationProgress).toHaveBeenCalledTimes(1);
+      expect(listenExplorationComplete).toHaveBeenCalledTimes(1);
+      expect(listenExplorationError).toHaveBeenCalledTimes(1);
+    });
+
+    fireEvent.change(editor, { target: { value: "去玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+
+    const departure = await screen.findByText("小团子 出发，去玩～");
+    const outingArticle = departure.closest("article");
+    expect(outingArticle).not.toBeNull();
+    expect(within(outingArticle!).getByRole("img", { name: "小团子" })).toBeVisible();
+
+    act(() => {
+      explorationProgressListener({ taskId: "other", status: "writing" });
+    });
+    expect(departure).toBeVisible();
+    act(() => {
+      explorationProgressListener({ taskId: "task-1", status: "reading" });
+    });
+    expect(screen.getByText("小团子 正在阅读～")).toBeVisible();
+
+    act(() => {
+      explorationCompleteListener({ taskId: "other", result: diaryResult });
+    });
+    expect(screen.queryByText("第二轮回来啦")).not.toBeInTheDocument();
+    act(() => {
+      explorationCompleteListener({ taskId: "task-1", result: diaryResult });
+    });
+
+    const diary = screen.getByText("第二轮回来啦");
+    expect(diary.closest("article")).toBe(outingArticle);
+    expect(within(outingArticle!).getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
+    expect(within(outingArticle!).getByText("思考了 17 秒")).toBeVisible();
+    expect(within(outingArticle!).getByRole("link", { name: "可信来源甲" })).toHaveAttribute(
+      "href",
+      "https://example.com/one",
+    );
+    for (const link of within(outingArticle!).getAllByRole("link")) {
+      expect(link).toHaveAttribute("target", "_blank");
+      expect(link).toHaveAttribute("rel", "noreferrer");
+    }
+    expect(screen.queryByRole("region", { name: "探索结果" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "允许出去玩" })).not.toBeInTheDocument();
+    expect(mockSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("replaces an outing placeholder with a safe Chinese error", async () => {
+    mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-1" });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "去海里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+
+    const departure = await screen.findByText("AIbb 出发，去玩～");
+    const outingArticle = departure.closest("article");
+    act(() => {
+      explorationErrorListener({
+        taskId: "task-1",
+        code: "invalid_request",
+        message: "Authorization: Bearer sk-must-not-render",
+      });
+    });
+
+    const safeError = screen.getByText(/请求被模型服务拒绝/);
+    expect(safeError.closest("article")).toBe(outingArticle);
+    expect(screen.queryByText(/sk-must-not-render/)).not.toBeInTheDocument();
+    expect(editor).toBeEnabled();
+  });
+
+  it("keeps an ordinary message as an ordinary chat reply", async () => {
+    mockSubmit.mockImplementation(async (_message, id) => ({
+      kind: "chatStarted",
+      requestId: id,
+    }));
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+
+    fireEvent.change(editor, { target: { value: "今天星期几？" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+    const activeId = mockSubmit.mock.calls[0][1];
+    act(() => completeListener({ requestId: activeId, message: "今天是星期四。" }));
+
+    expect(screen.getByText("今天是星期四。")).toBeVisible();
+    expect(screen.queryByText(/出发，去玩/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/轮回来啦/)).not.toBeInTheDocument();
   });
 
   it("renames existing assistant messages after a profile update", async () => {

@@ -6,18 +6,27 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
-import type { AibbProfile, AppErrorPayload, BootstrapState } from "../../contracts";
+import type {
+  AibbProfile,
+  AppErrorPayload,
+  BootstrapState,
+  ExplorationResult,
+  ExplorationStatus,
+  OutingTimelineMessage,
+} from "../../contracts";
 import {
   getBootstrapState,
   loadAibbProfile,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenExplorationComplete,
+  listenExplorationError,
+  listenExplorationProgress,
   listenProfileUpdated,
   openSettingsWindow,
   submitUserInput,
 } from "../../lib/tauri";
-import { ExplorationPanel } from "../exploration/ExplorationPanel";
 
 const FIRST_RUN_GREETING =
   "你好！我是喜欢出去玩耍的快乐 AIbb。先配置一个大模型 API，我们再聊天吧。";
@@ -30,8 +39,11 @@ const DEFAULT_PROFILE: AibbProfile = {
 interface ChatMessageView {
   id: string;
   role: "user" | "assistant";
+  kind: "text";
   content: string;
 }
+
+type TimelineMessage = ChatMessageView | OutingTimelineMessage;
 
 function requestId(): string {
   return globalThis.crypto?.randomUUID?.() ??
@@ -54,6 +66,82 @@ function publicError(error: unknown): AppErrorPayload {
     };
   }
   return { code: "request_failed", message: "操作失败。" };
+}
+
+function publicExplorationError(error: AppErrorPayload): string {
+  const messages: Record<string, string> = {
+    invalidSettings: "请打开设置，填写并保存 API 地址和模型名称后重试。",
+    invalid_request: "请求被模型服务拒绝，请打开设置确认模型名称已经保存。",
+    model_not_found: "找不到当前模型，请打开设置检查模型名称。",
+    authentication_failed: "API Key 认证失败，请打开设置重新检查。",
+    rate_limited: "请求过于频繁，请稍后再让 AIbb 出去玩。",
+    request_timeout: "探索请求超时，请稍后重试。",
+    provider_unavailable: "模型服务暂时不可用，请稍后重试。",
+    invalid_response: "模型返回的内容无法识别，请稍后重试。",
+    invalid_outing_diary: "这次出游日记没有整理好，请稍后重试。",
+    cancelled: "探索已取消。",
+    unsafe_url: "探索遇到了不安全的网页地址，已停止访问。",
+    unsupported_content: "探索页面的内容格式暂不支持。",
+    response_too_large: "探索页面内容过大，AIbb 已停止读取。",
+    public_search_unavailable: "公共搜索暂时不可用，请稍后重试。",
+    public_page_unavailable: "探索页面暂时无法访问，请稍后重试。",
+    redirect_limit_exceeded: "探索页面跳转次数过多，已停止访问。",
+    page_budget_exceeded: "本次探索读取的页面已达到上限。",
+    provider_capability_unsupported: "当前模型不支持这项联网能力。",
+    native_web_unsupported: "当前模型不支持原生联网，请在设置中使用自动探测。",
+    format_incomplete: "模型没有返回完整的四个探索结果，请稍后重试。",
+    invalid_query_envelope: "模型生成的搜索方向无法识别，请稍后重试。",
+    exploration_storage_unavailable: "探索记录暂时无法保存，请稍后重试。",
+    exploration_state_unavailable: "探索状态暂时不可用，请稍后重试。",
+    exploration_not_found: "没有找到这次探索记录。",
+    exploration_not_cancellable: "这次探索已经结束，无法再取消。",
+    invalid_exploration_transition: "探索状态出现异常，请重新开始。",
+    storageUnavailable: "本地数据暂时无法访问，请重启 AIbb 后重试。",
+  };
+  return messages[error.code] ?? "探索暂时失败，请稍后重试；若持续发生，请检查模型设置。";
+}
+
+function explorationStatusLabel(status: ExplorationStatus): string {
+  const labels: Record<ExplorationStatus, string> = {
+    queued: "准备出发",
+    choosing: "正在决定方向",
+    nativeSearching: "正在联网探索",
+    publicSearching: "正在搜索公开内容",
+    reading: "正在阅读",
+    writing: "正在整理发现",
+    correcting: "正在完善结果",
+    completed: "探索完成",
+    cancelled: "已取消",
+    interrupted: "已中断",
+    failed: "失败",
+  };
+  return labels[status];
+}
+
+function outingDiaryMessage(
+  taskId: string,
+  result: ExplorationResult,
+): OutingTimelineMessage {
+  return {
+    id: `outing-${taskId}`,
+    role: "assistant",
+    kind: "outingDiary",
+    taskId,
+    content: result.diary,
+    sources: result.sources,
+    roundNumber: result.roundNumber,
+    elapsedSeconds: result.elapsedSeconds,
+  };
+}
+
+function replaceOutingMessage(
+  messages: TimelineMessage[],
+  taskId: string,
+  replacement: OutingTimelineMessage,
+): TimelineMessage[] {
+  return messages.map((message) =>
+    message.kind !== "text" && message.taskId === taskId ? replacement : message,
+  );
 }
 
 function ChatHeader({ profile }: { profile: AibbProfile }) {
@@ -91,14 +179,51 @@ function AssistantIdentity({ profile }: { profile: AibbProfile }) {
   );
 }
 
+function MessageBody({
+  message,
+  profile,
+}: {
+  message: TimelineMessage;
+  profile: AibbProfile;
+}) {
+  if (message.kind === "outingDiary") {
+    return (
+      <div className="message outing-diary">
+        <div className="outing-diary-heading">
+          <h2>第 {message.roundNumber} 轮回来啦</h2>
+          <span>思考了 {message.elapsedSeconds} 秒</span>
+        </div>
+        <p className="outing-diary-content">{message.content}</p>
+        {message.sources.length > 0 && (
+          <ul className="outing-sources" aria-label="来源">
+            {message.sources.map((source) => (
+              <li key={source.url}>
+                <a href={source.url} target="_blank" rel="noreferrer">
+                  {source.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    );
+  }
+  if (message.kind === "outingStatus") {
+    return <p className="message outing-status">{profile.name} {message.content}</p>;
+  }
+  if (message.kind === "outingError") {
+    return <p className="message outing-error" role="alert">{message.content}</p>;
+  }
+  return <p className="message">{message.content}</p>;
+}
+
 export function ChatPanel() {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
   const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessageView[]>([]);
+  const [messages, setMessages] = useState<TimelineMessage[]>([]);
   const [streamingReply, setStreamingReply] = useState("");
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
-  const [explorationTaskId, setExplorationTaskId] = useState<string | null>(null);
   const [error, setError] = useState<AppErrorPayload | null>(null);
   const activeRequest = useRef<string | null>(null);
 
@@ -127,11 +252,34 @@ export function ChatPanel() {
       if (event.requestId !== activeRequest.current) return;
       setMessages((current) => [
         ...current,
-        { id: `assistant-${event.requestId}`, role: "assistant", content: event.message },
+        { id: `assistant-${event.requestId}`, role: "assistant", kind: "text", content: event.message },
       ]);
       activeRequest.current = null;
       setActiveRequestId(null);
       setStreamingReply("");
+    }));
+    installListener(listenExplorationProgress((event) => {
+      setMessages((current) => replaceOutingMessage(current, event.taskId, {
+        id: `outing-${event.taskId}`,
+        role: "assistant",
+        kind: "outingStatus",
+        taskId: event.taskId,
+        content: `${explorationStatusLabel(event.status)}～`,
+      }));
+    }));
+    installListener(listenExplorationComplete((event) => {
+      setMessages((current) =>
+        replaceOutingMessage(current, event.taskId, outingDiaryMessage(event.taskId, event.result)),
+      );
+    }));
+    installListener(listenExplorationError((event) => {
+      setMessages((current) => replaceOutingMessage(current, event.taskId, {
+        id: `outing-${event.taskId}`,
+        role: "assistant",
+        kind: "outingError",
+        taskId: event.taskId,
+        content: publicExplorationError(event),
+      }));
     }));
     installListener(listenChatError((event) => {
       if (event.requestId !== activeRequest.current) return;
@@ -173,14 +321,23 @@ export function ChatPanel() {
     setStreamingReply("");
     setMessages((current) => [
       ...current,
-      { id: `user-${id}`, role: "user", content: message },
+      { id: `user-${id}`, role: "user", kind: "text", content: message },
     ]);
     try {
       const disposition = await submitUserInput(message, id);
       if (disposition.kind === "explorationStarted") {
         activeRequest.current = null;
         setActiveRequestId(null);
-        setExplorationTaskId(disposition.taskId);
+        setMessages((current) => [
+          ...current,
+          {
+            id: `outing-${disposition.taskId}`,
+            role: "assistant",
+            kind: "outingStatus",
+            taskId: disposition.taskId,
+            content: "出发，去玩～",
+          },
+        ]);
       }
     } catch (reason) {
       activeRequest.current = null;
@@ -235,7 +392,7 @@ export function ChatPanel() {
     <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
       <ChatHeader profile={profile} />
       <section className="conversation" aria-live="polite">
-        {messages.length === 0 && !activeRequestId && !explorationTaskId && (
+        {messages.length === 0 && !activeRequestId && (
           <div className="chat-welcome">
             <span aria-hidden="true">✦</span>
             <h2>今天想去哪里玩？</h2>
@@ -245,7 +402,7 @@ export function ChatPanel() {
         {messages.map((message) => (
           <article key={message.id} className={`message-row ${message.role}`}>
             {message.role === "assistant" ? <AssistantIdentity profile={profile} /> : <span className="message-author">你</span>}
-            <p className="message">{message.content}</p>
+            <MessageBody message={message} profile={profile} />
           </article>
         ))}
         {activeRequestId && (
@@ -263,7 +420,6 @@ export function ChatPanel() {
           <span>{error.message}</span>
         </p>
       )}
-      {explorationTaskId && <ExplorationPanel taskId={explorationTaskId} />}
       <form aria-label="发送消息" className="composer" onSubmit={submit}>
         <label>
           <span className="sr-only">消息</span>

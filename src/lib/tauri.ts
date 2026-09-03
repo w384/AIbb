@@ -50,16 +50,6 @@ export function submitUserInput(
   return invoke("submit_user_input", { message, requestId });
 }
 
-export function startExploration(direction?: string): Promise<string> {
-  return invoke("start_exploration", {
-    request: { direction: direction ?? null },
-  });
-}
-
-export function cancelExploration(taskId: string): Promise<void> {
-  return invoke("cancel_exploration", { taskId });
-}
-
 export function loadSettings(): Promise<ApiSettings> {
   return invoke("load_settings");
 }

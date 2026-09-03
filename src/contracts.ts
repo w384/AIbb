@@ -73,11 +73,45 @@ export interface ExplorationProgressEvent {
   status: ExplorationStatus;
 }
 
+export interface OutingSource {
+  title: string;
+  url: string;
+}
+
 export interface ExplorationResult {
   items: [string, string, string, string];
-  nextOutingRequest: string;
+  diary: string;
+  sources: OutingSource[];
+  roundNumber: number;
+  elapsedSeconds: number;
   rawResponse: string;
 }
+
+export type OutingTimelineMessage =
+  | {
+      id: string;
+      role: "assistant";
+      kind: "outingStatus";
+      taskId: string;
+      content: string;
+    }
+  | {
+      id: string;
+      role: "assistant";
+      kind: "outingDiary";
+      taskId: string;
+      content: string;
+      sources: OutingSource[];
+      roundNumber: number;
+      elapsedSeconds: number;
+    }
+  | {
+      id: string;
+      role: "assistant";
+      kind: "outingError";
+      taskId: string;
+      content: string;
+    };
 
 export interface ExplorationCompleteEvent {
   taskId: string;
