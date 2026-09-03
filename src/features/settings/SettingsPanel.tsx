@@ -71,9 +71,11 @@ export function SettingsPanel() {
   const [profile, setProfile] = useState<AibbProfile>(EMPTY_PROFILE);
   const [profileName, setProfileName] = useState(EMPTY_PROFILE.name);
   const [pendingAvatar, setPendingAvatar] = useState<NormalizedAvatarImage | null>(null);
+  const [pendingAvatarDataUrl, setPendingAvatarDataUrl] = useState<string | null>(null);
   const [apiKey, setApiKey] = useState("");
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<AppErrorPayload | null>(null);
+  const [profileError, setProfileError] = useState<AppErrorPayload | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [settingsInFlight, setSettingsInFlight] = useState(false);
@@ -81,12 +83,10 @@ export function SettingsPanel() {
 
   useEffect(() => {
     let disposed = false;
-    void Promise.all([loadSettings(), loadAibbProfile()])
-      .then(([loadedSettings, loadedProfile]) => {
+    void loadSettings()
+      .then((loadedSettings) => {
         if (!disposed) {
           setSettings(withProviderDefaults(loadedSettings));
-          setProfile(loadedProfile);
-          setProfileName(loadedProfile.name);
           setApiKey("");
           setLoaded(true);
         }
@@ -96,6 +96,16 @@ export function SettingsPanel() {
           setError(publicError(reason));
           setLoaded(true);
         }
+      });
+    void loadAibbProfile()
+      .then((loadedProfile) => {
+        if (!disposed) {
+          setProfile(loadedProfile);
+          setProfileName(loadedProfile.name);
+        }
+      })
+      .catch((reason: unknown) => {
+        if (!disposed) setProfileError(publicError(reason));
       });
     return () => {
       disposed = true;
@@ -167,19 +177,16 @@ export function SettingsPanel() {
     event.target.value = "";
     if (!file || profileInFlight) return;
 
-    setError(null);
+    setProfileError(null);
     setNotice(null);
     setProfileInFlight(true);
     try {
       const normalized = await normalizeAvatarFile(file);
       setPendingAvatar(normalized);
-      setProfile((current) => ({
-        ...current,
-        avatarDataUrl: imageDataUrl(normalized.bytes, normalized.mimeType),
-      }));
+      setPendingAvatarDataUrl(imageDataUrl(normalized.bytes, normalized.mimeType));
       setNotice("新头像已准备好，保存 AIbb 资料后生效。");
     } catch {
-      setError({
+      setProfileError({
         code: "invalidProfile",
         message: "头像处理失败，请选择 PNG、JPEG 或 WebP 格式且不超过 5 MiB 的图片。",
       });
@@ -190,20 +197,43 @@ export function SettingsPanel() {
 
   async function saveProfile() {
     if (profileInFlight) return;
-    setError(null);
+    setProfileError(null);
     setNotice(null);
     setProfileInFlight(true);
     try {
-      let savedProfile = await saveAibbName(profileName.trim());
       if (pendingAvatar) {
-        savedProfile = await saveAibbAvatar(pendingAvatar.bytes, pendingAvatar.mimeType);
-        setPendingAvatar(null);
+        let avatarSaved: AibbProfile;
+        try {
+          avatarSaved = await saveAibbAvatar(pendingAvatar.bytes, pendingAvatar.mimeType);
+        } catch (reason) {
+          restoreProfileDraft();
+          setProfileError(publicError(reason));
+          return;
+        }
+        try {
+          const savedProfile = await saveAibbName(profileName.trim());
+          setProfile(savedProfile);
+          setProfileName(savedProfile.name);
+          clearPendingAvatar();
+          setNotice("AIbb 资料已保存");
+        } catch {
+          setProfile(avatarSaved);
+          setProfileName(avatarSaved.name);
+          clearPendingAvatar();
+          setProfileError({
+            code: "profilePartiallySaved",
+            message: "头像已保存，昵称未保存。请重新输入昵称后重试。",
+          });
+        }
+        return;
       }
+      const savedProfile = await saveAibbName(profileName.trim());
       setProfile(savedProfile);
       setProfileName(savedProfile.name);
       setNotice("AIbb 资料已保存");
     } catch (reason) {
-      setError(publicError(reason));
+      restoreProfileDraft();
+      setProfileError(publicError(reason));
     } finally {
       setProfileInFlight(false);
     }
@@ -211,20 +241,34 @@ export function SettingsPanel() {
 
   async function resetAvatar() {
     if (profileInFlight) return;
-    setError(null);
+    setProfileError(null);
     setNotice(null);
     setProfileInFlight(true);
     try {
       const savedProfile = await resetAibbAvatar();
       setProfile(savedProfile);
       setProfileName(savedProfile.name);
-      setPendingAvatar(null);
+      clearPendingAvatar();
       setNotice("已恢复 AIbb 默认头像");
     } catch (reason) {
-      setError(publicError(reason));
+      setProfileError(publicError(reason));
     } finally {
       setProfileInFlight(false);
     }
+  }
+
+  function clearPendingAvatar() {
+    setPendingAvatar(null);
+    setPendingAvatarDataUrl(null);
+  }
+
+  function restoreProfileDraft() {
+    setProfileName(profile.name);
+    clearPendingAvatar();
+  }
+
+  function updateProfileName(value: string) {
+    if (Array.from(value).length <= 24) setProfileName(value);
   }
 
   async function confirmClear() {
@@ -253,7 +297,7 @@ export function SettingsPanel() {
       <form className="settings-form" aria-busy={settingsInFlight || profileInFlight} onSubmit={save}>
         <section className="profile-card" aria-labelledby="profile-heading">
           <div className="profile-preview" aria-label="AIbb 资料预览">
-            <span className="profile-avatar"><AibbAvatar avatarDataUrl={profile.avatarDataUrl} name={profileName.trim() || profile.name} /></span>
+            <span className="profile-avatar"><AibbAvatar avatarDataUrl={pendingAvatarDataUrl ?? profile.avatarDataUrl} name={profileName.trim() || profile.name} /></span>
             <div>
               <h2 id="profile-heading">AIbb 资料</h2>
               <strong>{profileName.trim() || profile.name}</strong>
@@ -264,9 +308,8 @@ export function SettingsPanel() {
             <span>AIbb 昵称</span>
             <input
               disabled={profileInFlight}
-              maxLength={24}
               value={profileName}
-              onChange={(event) => setProfileName(event.target.value)}
+              onChange={(event) => updateProfileName(event.target.value)}
             />
           </label>
           <div className="profile-actions">
@@ -274,10 +317,11 @@ export function SettingsPanel() {
               <span>选择头像</span>
               <input aria-label="选择头像" accept="image/png,image/jpeg,image/webp" disabled={profileInFlight} type="file" onChange={(event) => void selectAvatar(event)} />
             </label>
-            <button className="button secondary" disabled={profileInFlight || !profile.avatarDataUrl} type="button" onClick={() => void resetAvatar()}>恢复默认头像</button>
+            <button className="button secondary" disabled={profileInFlight || !(pendingAvatarDataUrl ?? profile.avatarDataUrl)} type="button" onClick={() => void resetAvatar()}>恢复默认头像</button>
             <button className="button primary" disabled={profileInFlight} type="button" onClick={() => void saveProfile()}>保存 AIbb 资料</button>
           </div>
         </section>
+        {profileError && <p className="feedback error" role="alert">{profileError.message}</p>}
 
         <label className="field">
           <span>API 地址</span>

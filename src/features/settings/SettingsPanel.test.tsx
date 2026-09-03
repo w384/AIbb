@@ -12,6 +12,7 @@ import {
   saveSettings,
   testConnection,
 } from "../../lib/tauri";
+import { normalizeAvatarFile } from "../profile/avatarImage";
 
 vi.mock("../../lib/tauri", () => ({
   clearMemory: vi.fn(),
@@ -25,6 +26,10 @@ vi.mock("../../lib/tauri", () => ({
   testConnection: vi.fn(),
 }));
 
+vi.mock("../profile/avatarImage", () => ({
+  normalizeAvatarFile: vi.fn(),
+}));
+
 describe("SettingsPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -32,6 +37,10 @@ describe("SettingsPanel", () => {
     vi.mocked(testConnection).mockResolvedValue();
     vi.mocked(clearMemory).mockResolvedValue();
     vi.mocked(exitApp).mockResolvedValue();
+    vi.mocked(normalizeAvatarFile).mockResolvedValue({
+      bytes: new Uint8Array([1, 2, 3]),
+      mimeType: "image/webp",
+    });
     vi.mocked(loadAibbProfile).mockResolvedValue({
       name: "AIbb",
       avatarDataUrl: null,
@@ -72,7 +81,88 @@ describe("SettingsPanel", () => {
     await waitFor(() => expect(saveAibbName).toHaveBeenCalledWith("小团子"));
   });
 
+  it("does not change the displayed or persisted nickname when avatar save fails", async () => {
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "原名",
+      avatarDataUrl: null,
+      version: 2,
+    });
+    vi.mocked(saveAibbAvatar).mockRejectedValue({ code: "profileStorageUnavailable" });
+    render(<SettingsPanel />);
+
+    fireEvent.change(await screen.findByLabelText("AIbb 昵称"), { target: { value: "新名字" } });
+    fireEvent.change(screen.getByLabelText("选择头像"), {
+      target: { files: [new File(["png"], "face.png", { type: "image/png" })] },
+    });
+    await waitFor(() => expect(normalizeAvatarFile).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "保存 AIbb 资料" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("无法访问 AIbb 头像");
+    expect(saveAibbName).not.toHaveBeenCalled();
+    expect(screen.getByLabelText("AIbb 昵称")).toHaveValue("原名");
+    expect(screen.getByText("原名")).toBeVisible();
+  });
+
+  it("reports the saved avatar when nickname save fails after it", async () => {
+    vi.mocked(loadAibbProfile).mockResolvedValue({
+      name: "原名",
+      avatarDataUrl: null,
+      version: 2,
+    });
+    vi.mocked(saveAibbAvatar).mockResolvedValue({
+      name: "原名",
+      avatarDataUrl: "data:image/webp;base64,AQID",
+      version: 3,
+    });
+    vi.mocked(saveAibbName).mockRejectedValue({ code: "invalidProfile" });
+    render(<SettingsPanel />);
+
+    fireEvent.change(await screen.findByLabelText("AIbb 昵称"), { target: { value: "新名字" } });
+    fireEvent.change(screen.getByLabelText("选择头像"), {
+      target: { files: [new File(["png"], "face.png", { type: "image/png" })] },
+    });
+    await waitFor(() => expect(normalizeAvatarFile).toHaveBeenCalledTimes(1));
+    fireEvent.click(screen.getByRole("button", { name: "保存 AIbb 资料" }));
+
+    expect(await screen.findByRole("alert")).toHaveTextContent("头像已保存，昵称未保存");
+    expect(screen.getByLabelText("AIbb 昵称")).toHaveValue("原名");
+    expect(screen.getByRole("img", { name: "原名" })).toHaveAttribute(
+      "src",
+      "data:image/webp;base64,AQID",
+    );
+  });
+
+  it("keeps API settings available when only the stored profile cannot load", async () => {
+    vi.mocked(loadAibbProfile).mockRejectedValue({ code: "profileStorageUnavailable" });
+    render(<SettingsPanel />);
+
+    expect(await screen.findByLabelText("API 地址")).toHaveValue("https://example.test/v1");
+    expect(await screen.findByText("无法访问 AIbb 头像，请稍后再试。")).toBeVisible();
+  });
+
+  it("keeps profile load feedback visible when saving unrelated API settings", async () => {
+    vi.mocked(loadAibbProfile).mockRejectedValue({ code: "profileStorageUnavailable" });
+    render(<SettingsPanel />);
+    await screen.findByText("无法访问 AIbb 头像，请稍后再试。");
+
+    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
+
+    await waitFor(() => expect(saveSettings).toHaveBeenCalledTimes(1));
+    expect(screen.getByText("无法访问 AIbb 头像，请稍后再试。")).toBeVisible();
+  });
+
+  it("allows all 24 Unicode nickname scalars instead of limiting UTF-16 code units", async () => {
+    render(<SettingsPanel />);
+    const nickname = await screen.findByLabelText("AIbb 昵称");
+    const name = "😀".repeat(24);
+
+    fireEvent.change(nickname, { target: { value: name } });
+
+    expect(nickname).toHaveValue(name);
+  });
+
   it("keeps the current preview when a selected image cannot be normalized", async () => {
+    vi.mocked(normalizeAvatarFile).mockRejectedValue(new Error("bad image"));
     vi.mocked(loadAibbProfile).mockResolvedValue({
       name: "AIbb",
       avatarDataUrl: "data:image/webp;base64,OLD",

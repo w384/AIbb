@@ -111,3 +111,5 @@ export const listenExplorationComplete = (
 export const listenExplorationError = (
   listener: PayloadListener<ExplorationErrorEvent>,
 ) => listenFor("exploration://error", listener);
+export const listenProfileUpdated = (listener: PayloadListener<AibbProfile>) =>
+  listenFor("profile://updated", listener);
