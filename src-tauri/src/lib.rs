@@ -12,10 +12,8 @@ pub mod storage;
 pub mod web;
 
 use app_state::AppState;
-use commands::chat::{build_chat_service, start_chat, submit_user_input};
-use commands::exploration::{
-    build_exploration_orchestrator, cancel_exploration, start_exploration,
-};
+use commands::chat::{build_chat_service, submit_user_input};
+use commands::exploration::build_exploration_orchestrator;
 use commands::memory::clear_memory;
 use commands::profile::{load_aibb_profile, reset_aibb_avatar, save_aibb_avatar, save_aibb_name};
 use commands::settings::{clear_api_key, load_settings, save_settings, test_connection};
@@ -65,6 +63,7 @@ pub fn run() {
             );
             let memory = MemoryRepository::new(database.clone());
             let bootstrap = tauri::async_runtime::block_on(settings.load_bootstrap_state())?;
+            let profile = tauri::async_runtime::block_on(settings.load_aibb_profile())?;
             let exploration = build_exploration_orchestrator(
                 app.handle().clone(),
                 database,
@@ -81,6 +80,7 @@ pub fn run() {
                 exploration,
             ));
             platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
+            commands::profile::publish_profile_updated(app.handle(), &profile);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -99,9 +99,6 @@ pub fn run() {
             save_aibb_avatar,
             reset_aibb_avatar,
             clear_memory,
-            start_exploration,
-            cancel_exploration,
-            start_chat,
             submit_user_input
         ])
         .run(tauri::generate_context!())
@@ -180,6 +177,21 @@ mod tests {
     }
 
     #[test]
+    fn webviews_enforce_a_local_only_content_security_policy() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let csp = config["app"]["security"]["csp"]
+            .as_str()
+            .expect("production webviews must configure CSP");
+
+        assert!(csp.contains("default-src 'self'"));
+        assert!(csp.contains("connect-src ipc: http://ipc.localhost"));
+        assert!(csp.contains("img-src 'self' data:"));
+        assert!(!csp.contains("https:"));
+        assert!(!csp.contains("http: "));
+    }
+
+    #[test]
     fn chat_capability_grants_only_chat_events_and_required_commands() {
         let path = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("capabilities")
@@ -197,9 +209,7 @@ mod tests {
                 "allow-get-bootstrap-state",
                 "allow-load-aibb-profile",
                 "allow-open-settings-window",
-                "allow-submit-user-input",
-                "allow-start-exploration",
-                "allow-cancel-exploration"
+                "allow-submit-user-input"
             ])
         );
     }
@@ -289,6 +299,8 @@ mod tests {
         let capability_directory = Path::new(env!("CARGO_MANIFEST_DIR")).join("capabilities");
         let forbidden = [
             "allow-start-chat",
+            "allow-start-exploration",
+            "allow-cancel-exploration",
             "allow-load-settings",
             "allow-save-settings",
             "allow-start-pet-drag",

@@ -24,8 +24,17 @@ pub struct WorkArea {
     pub height: i32,
 }
 
-pub fn toggle_chat(app: &AppHandle) -> Result<(), AppError> {
-    let window = get_or_create_window(app, "chat", "AIbb Chat", 420.0, 620.0)?;
+pub fn profile_window_title(label: &str, profile_name: &str) -> String {
+    match label {
+        "chat" => format!("{profile_name} Chat"),
+        "settings" => format!("{profile_name} Settings"),
+        _ => profile_name.to_string(),
+    }
+}
+
+pub fn toggle_chat(app: &AppHandle, profile_name: &str) -> Result<(), AppError> {
+    let title = profile_window_title("chat", profile_name);
+    let window = get_or_create_window(app, "chat", &title, 420.0, 620.0)?;
     let is_visible = window
         .is_visible()
         .map_err(|error| window_error("read chat window visibility", error))?;
@@ -44,8 +53,9 @@ pub fn toggle_chat(app: &AppHandle) -> Result<(), AppError> {
     }
 }
 
-pub fn open_settings(app: &AppHandle) -> Result<(), AppError> {
-    let window = get_or_create_window(app, "settings", "AIbb Settings", 520.0, 640.0)?;
+pub fn open_settings(app: &AppHandle, profile_name: &str) -> Result<(), AppError> {
+    let title = profile_window_title("settings", profile_name);
+    let window = get_or_create_window(app, "settings", &title, 520.0, 640.0)?;
     window
         .show()
         .map_err(|error| window_error("show settings window", error))?;
@@ -207,6 +217,16 @@ fn window_error(action: &str, error: tauri::Error) -> AppError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_window_titles_use_the_saved_profile_name() {
+        assert_eq!(profile_window_title("pet", "小团子"), "小团子");
+        assert_eq!(profile_window_title("chat", "小团子"), "小团子 Chat");
+        assert_eq!(
+            profile_window_title("settings", "小团子"),
+            "小团子 Settings"
+        );
+    }
 
     #[test]
     fn clamps_a_pet_that_would_be_off_the_right_and_bottom_edges() {

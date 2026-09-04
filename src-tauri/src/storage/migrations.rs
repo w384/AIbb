@@ -72,12 +72,54 @@ ALTER TABLE explorations ADD COLUMN round_number INTEGER;
 ALTER TABLE explorations ADD COLUMN elapsed_seconds INTEGER;
 "#;
 
+const OUTING_UNIQUENESS: &str = r#"
+UPDATE explorations
+SET status = 'interrupted', updated_at = updated_at + 1
+WHERE status IN (
+  'queued', 'choosing', 'native_searching', 'public_searching',
+  'reading', 'writing', 'correcting'
+)
+AND rowid NOT IN (
+  SELECT rowid FROM explorations
+  WHERE status IN (
+    'queued', 'choosing', 'native_searching', 'public_searching',
+    'reading', 'writing', 'correcting'
+  )
+  ORDER BY created_at DESC, rowid DESC
+  LIMIT 1
+);
+
+WITH ranked AS (
+  SELECT rowid,
+         ROW_NUMBER() OVER (ORDER BY created_at ASC, rowid ASC) AS round_number
+  FROM explorations
+  WHERE status = 'completed'
+)
+UPDATE explorations
+SET round_number = (
+  SELECT ranked.round_number FROM ranked WHERE ranked.rowid = explorations.rowid
+)
+WHERE status = 'completed';
+
+CREATE UNIQUE INDEX explorations_one_active_idx
+ON explorations((1))
+WHERE status IN (
+  'queued', 'choosing', 'native_searching', 'public_searching',
+  'reading', 'writing', 'correcting'
+);
+
+CREATE UNIQUE INDEX explorations_round_number_idx
+ON explorations(round_number)
+WHERE status = 'completed' AND round_number IS NOT NULL;
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
     Migrations::new(vec![
         M::up(INITIAL_SCHEMA),
         M::up(DEEPSEEK_MODEL_BACKFILL),
         M::up(AIBB_PROFILE),
         M::up(OUTING_DIARIES),
+        M::up(OUTING_UNIQUENESS),
     ])
     .to_latest(connection)
 }
@@ -135,5 +177,60 @@ mod tests {
             )
             .unwrap();
         assert_eq!(profile, ("AIbb".into(), None, 0));
+    }
+
+    #[test]
+    fn repairs_legacy_duplicates_before_enforcing_outing_uniqueness() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        Migrations::new(vec![
+            M::up(INITIAL_SCHEMA),
+            M::up(DEEPSEEK_MODEL_BACKFILL),
+            M::up(AIBB_PROFILE),
+            M::up(OUTING_DIARIES),
+        ])
+        .to_latest(&mut connection)
+        .unwrap();
+        connection
+            .execute_batch(
+                "INSERT INTO explorations(id, status, created_at, updated_at) VALUES
+                   ('active-old', 'reading', 1, 1),
+                   ('active-new', 'writing', 2, 2),
+                   ('done-old', 'completed', 3, 3),
+                   ('done-new', 'completed', 4, 4);
+                 UPDATE explorations SET round_number = 1 WHERE status = 'completed';",
+            )
+            .unwrap();
+
+        apply(&mut connection).unwrap();
+
+        let active_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM explorations WHERE status IN
+                   ('queued', 'choosing', 'native_searching', 'public_searching',
+                    'reading', 'writing', 'correcting')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        let rounds = connection
+            .prepare(
+                "SELECT round_number FROM explorations WHERE status = 'completed'
+                 ORDER BY created_at, rowid",
+            )
+            .unwrap()
+            .query_map([], |row| row.get::<_, i64>(0))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+
+        assert_eq!(active_count, 1);
+        assert_eq!(rounds, vec![1, 2]);
+        assert!(connection
+            .execute(
+                "INSERT INTO explorations(id, status, created_at, updated_at)
+                 VALUES ('active-third', 'queued', 5, 5)",
+                [],
+            )
+            .is_err());
     }
 }

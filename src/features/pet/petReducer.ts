@@ -19,6 +19,9 @@ export function petStatusReducer(state: PetState, event: PetEvent): PetState {
     case "CHAT_OPENED":
       return { status: "chatting", taskId: null };
     case "EXPLORATION_STARTED":
+      if (state.status === "exploring" && state.taskId !== event.taskId) {
+        return state;
+      }
       return { status: "exploring", taskId: event.taskId };
     case "EXPLORATION_COMPLETED":
       return state.taskId === event.taskId

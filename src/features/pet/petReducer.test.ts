@@ -36,4 +36,23 @@ describe("petStatusReducer", () => {
       }),
     ).toEqual({ status: "error", taskId: "task-1" });
   });
+
+  it("does not let late progress from an older task replace the active outing", () => {
+    const active = petStatusReducer(initialPetState, {
+      type: "EXPLORATION_STARTED",
+      taskId: "task-current",
+    });
+    const afterLateProgress = petStatusReducer(active, {
+      type: "EXPLORATION_STARTED",
+      taskId: "task-older",
+    });
+
+    expect(afterLateProgress).toBe(active);
+    expect(
+      petStatusReducer(afterLateProgress, {
+        type: "EXPLORATION_COMPLETED",
+        taskId: "task-older",
+      }),
+    ).toBe(active);
+  });
 });

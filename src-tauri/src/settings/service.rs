@@ -13,11 +13,13 @@ use crate::{
 
 use super::{
     profile::{
-        avatar_data_url, load_avatar_data_url, normalize_avatar, validate_aibb_name,
+        avatar_data_url, load_or_recover_avatar_data_url, normalize_avatar, validate_aibb_name,
         AvatarFileTransaction,
     },
-    CredentialStore,
+    CredentialStore, FixedCredentialStore,
 };
+
+type TransportFactory = dyn Fn(ApiSettings, Option<String>) -> Arc<dyn LlmTransport> + Send + Sync;
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -58,6 +60,7 @@ pub struct SettingsService {
     credentials: Arc<dyn CredentialStore>,
     operation: Arc<AsyncMutex<()>>,
     profile_directory: Option<Arc<PathBuf>>,
+    transport_factory: Arc<TransportFactory>,
 }
 
 impl SettingsService {
@@ -65,11 +68,29 @@ impl SettingsService {
     where
         C: CredentialStore + 'static,
     {
+        Self::new_with_transport_factory(database, credentials, |settings, api_key| {
+            Arc::new(OpenAiClient::new(
+                settings,
+                FixedCredentialStore::new(api_key),
+            ))
+        })
+    }
+
+    pub fn new_with_transport_factory<C, F>(
+        database: Database,
+        credentials: C,
+        transport_factory: F,
+    ) -> Self
+    where
+        C: CredentialStore + 'static,
+        F: Fn(ApiSettings, Option<String>) -> Arc<dyn LlmTransport> + Send + Sync + 'static,
+    {
         Self {
             database,
             credentials: Arc::new(credentials),
             operation: Arc::new(AsyncMutex::new(())),
             profile_directory: None,
+            transport_factory: Arc::new(transport_factory),
         }
     }
 
@@ -108,19 +129,22 @@ impl SettingsService {
 
     fn load_aibb_profile_unlocked(&self) -> Result<AibbProfile, AppError> {
         let profile = self.database.load_aibb_profile()?;
-        let avatar_data_url = match profile.avatar_filename.as_deref() {
-            Some(filename) => Some(load_avatar_data_url(
-                self.profile_directory()?,
-                Some(filename),
-            )?)
-            .flatten(),
-            None => None,
+        let (avatar_data_url, version) = match profile.avatar_filename.as_deref() {
+            Some(filename) => {
+                let avatar =
+                    load_or_recover_avatar_data_url(self.profile_directory()?, Some(filename))?;
+                match avatar {
+                    Some(avatar) => (Some(avatar), profile.version),
+                    None => (None, self.database.set_aibb_avatar_present(false)?),
+                }
+            }
+            None => (None, profile.version),
         };
 
         Ok(AibbProfile {
             name: profile.name,
             avatar_data_url,
-            version: profile.version,
+            version,
         })
     }
 
@@ -263,10 +287,23 @@ impl SettingsService {
             autostart: persisted.autostart,
             api_configured: false,
         };
-        let transport = OpenAiClient::from_shared(settings, Arc::clone(&self.credentials));
+        let api_key = self
+            .credentials
+            .get()
+            .await
+            .map_err(|_| credential_store_access_error())?;
+        let transport = (self.transport_factory)(settings, api_key);
 
         transport.test_connection(CancellationToken::new()).await?;
         self.database.set_first_run_complete()
+    }
+
+    pub(crate) fn exploration_transport(
+        &self,
+        settings: ApiSettings,
+        api_key: Option<String>,
+    ) -> Arc<dyn LlmTransport> {
+        (self.transport_factory)(settings, api_key)
     }
 
     pub async fn load_bootstrap_state(&self) -> Result<BootstrapState, AppError> {
@@ -315,10 +352,16 @@ fn normalize_replacement_key(api_key: String) -> Option<String> {
 }
 
 fn validate_required_settings(api_base: &str, model: &str) -> Result<(), AppError> {
-    if api_base.trim().is_empty() || model.trim().is_empty() {
+    let valid_api_base = url::Url::parse(api_base.trim()).ok().is_some_and(|url| {
+        url.scheme() == "https"
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+    });
+    if !valid_api_base || model.trim().is_empty() {
         return Err(AppError::new(
             "invalidSettings",
-            "API address and model name are required.",
+            "A secure HTTPS API address and model name are required.",
         ));
     }
     Ok(())

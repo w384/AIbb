@@ -57,12 +57,10 @@ function publicError(error: unknown): AppErrorPayload {
     "code" in error &&
     typeof error.code === "string"
   ) {
+    const code = error.code;
     return {
-      code: error.code,
-      message:
-        "message" in error && typeof error.message === "string"
-          ? error.message
-          : "操作失败。",
+      code,
+      message: publicExplorationError({ code, message: "" }),
     };
   }
   return { code: "request_failed", message: "操作失败。" };
@@ -70,7 +68,7 @@ function publicError(error: unknown): AppErrorPayload {
 
 function publicExplorationError(error: AppErrorPayload): string {
   const messages: Record<string, string> = {
-    invalidSettings: "请打开设置，填写并保存 API 地址和模型名称后重试。",
+    invalidSettings: "请打开设置，填写并保存 HTTPS API 地址和模型名称后重试。",
     invalid_request: "请求被模型服务拒绝，请打开设置确认模型名称已经保存。",
     model_not_found: "找不到当前模型，请打开设置检查模型名称。",
     authentication_failed: "API Key 认证失败，请打开设置重新检查。",
@@ -79,6 +77,8 @@ function publicExplorationError(error: AppErrorPayload): string {
     provider_unavailable: "模型服务暂时不可用，请稍后重试。",
     invalid_response: "模型返回的内容无法识别，请稍后重试。",
     invalid_outing_diary: "这次出游日记没有整理好，请稍后重试。",
+    missing_outing_sources: "这次没有找到可信来源，AIbb 已安全返回。",
+    exploration_already_running: "AIbb 已经在出游，请等这轮回来后再出发。",
     cancelled: "探索已取消。",
     unsafe_url: "探索遇到了不安全的网页地址，已停止访问。",
     unsupported_content: "探索页面的内容格式暂不支持。",
@@ -139,9 +139,25 @@ function replaceOutingMessage(
   taskId: string,
   replacement: OutingTimelineMessage,
 ): TimelineMessage[] {
-  return messages.map((message) =>
-    message.kind !== "text" && message.taskId === taskId ? replacement : message,
+  const index = messages.findIndex(
+    (message) => message.kind !== "text" && message.taskId === taskId,
   );
+  if (index < 0) return [...messages, replacement];
+  const existing = messages[index];
+  if (existing.kind === "text") return messages;
+  const newer = newerOutingMessage(existing, replacement);
+  if (newer === existing) return messages;
+  return messages.map((message, messageIndex) =>
+    messageIndex === index ? newer : message,
+  );
+}
+
+function newerOutingMessage(
+  current: OutingTimelineMessage | undefined,
+  incoming: OutingTimelineMessage,
+): OutingTimelineMessage {
+  if (current && current.kind !== "outingStatus") return current;
+  return incoming;
 }
 
 function ChatHeader({ profile }: { profile: AibbProfile }) {
@@ -226,6 +242,8 @@ export function ChatPanel() {
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [error, setError] = useState<AppErrorPayload | null>(null);
   const activeRequest = useRef<string | null>(null);
+  const knownOutings = useRef(new Set<string>());
+  const earlyOutingEvents = useRef(new Map<string, OutingTimelineMessage>());
 
   useEffect(() => {
     let disposed = false;
@@ -258,28 +276,45 @@ export function ChatPanel() {
       setActiveRequestId(null);
       setStreamingReply("");
     }));
+    const receiveOutingEvent = (taskId: string, incoming: OutingTimelineMessage) => {
+      if (!knownOutings.current.has(taskId)) {
+        earlyOutingEvents.current.set(
+          taskId,
+          newerOutingMessage(earlyOutingEvents.current.get(taskId), incoming),
+        );
+        if (earlyOutingEvents.current.size > 32) {
+          const oldest = earlyOutingEvents.current.keys().next().value;
+          if (oldest) earlyOutingEvents.current.delete(oldest);
+        }
+        return;
+      }
+      setMessages((current) =>
+        replaceOutingMessage(current, taskId, incoming),
+      );
+    };
     installListener(listenExplorationProgress((event) => {
-      setMessages((current) => replaceOutingMessage(current, event.taskId, {
+      receiveOutingEvent(event.taskId, {
         id: `outing-${event.taskId}`,
         role: "assistant",
         kind: "outingStatus",
         taskId: event.taskId,
         content: `${explorationStatusLabel(event.status)}～`,
-      }));
+      });
     }));
     installListener(listenExplorationComplete((event) => {
-      setMessages((current) =>
-        replaceOutingMessage(current, event.taskId, outingDiaryMessage(event.taskId, event.result)),
+      receiveOutingEvent(
+        event.taskId,
+        outingDiaryMessage(event.taskId, event.result),
       );
     }));
     installListener(listenExplorationError((event) => {
-      setMessages((current) => replaceOutingMessage(current, event.taskId, {
+      receiveOutingEvent(event.taskId, {
         id: `outing-${event.taskId}`,
         role: "assistant",
         kind: "outingError",
         taskId: event.taskId,
         content: publicExplorationError(event),
-      }));
+      });
     }));
     installListener(listenChatError((event) => {
       if (event.requestId !== activeRequest.current) return;
@@ -306,6 +341,7 @@ export function ChatPanel() {
       });
     return () => {
       disposed = true;
+      earlyOutingEvents.current.clear();
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, []);
@@ -328,16 +364,18 @@ export function ChatPanel() {
       if (disposition.kind === "explorationStarted") {
         activeRequest.current = null;
         setActiveRequestId(null);
-        setMessages((current) => [
-          ...current,
-          {
+        knownOutings.current.add(disposition.taskId);
+        const earlyEvent = earlyOutingEvents.current.get(disposition.taskId);
+        earlyOutingEvents.current.delete(disposition.taskId);
+        setMessages((current) =>
+          replaceOutingMessage(current, disposition.taskId, earlyEvent ?? {
             id: `outing-${disposition.taskId}`,
             role: "assistant",
             kind: "outingStatus",
             taskId: disposition.taskId,
             content: "出发，去玩～",
-          },
-        ]);
+          }),
+        );
       }
     } catch (reason) {
       activeRequest.current = null;

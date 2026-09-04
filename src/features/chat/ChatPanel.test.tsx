@@ -7,6 +7,7 @@ import type {
   ExplorationCompleteEvent,
   ExplorationErrorEvent,
   ExplorationProgressEvent,
+  InputDisposition,
 } from "../../contracts";
 import { ChatPanel } from "./ChatPanel";
 import {
@@ -88,6 +89,14 @@ const diaryResult = {
   elapsedSeconds: 17,
   rawResponse: "[omitted]",
 };
+
+function deferredDisposition() {
+  let resolve!: (value: InputDisposition) => void;
+  const promise = new Promise<InputDisposition>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
 
 describe("ChatPanel", () => {
   beforeEach(() => {
@@ -247,6 +256,109 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("region", { name: "探索结果" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "允许出去玩" })).not.toBeInTheDocument();
     expect(mockSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows a safe local message when another outing is already active", async () => {
+    mockSubmit.mockRejectedValue({
+      code: "exploration_already_running",
+      message: "internal task details must stay hidden",
+    });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+
+    fireEvent.change(editor, { target: { value: "去海里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "AIbb 已经在出游，请等这轮回来后再出发。",
+    );
+    expect(screen.queryByText(/internal task details/)).not.toBeInTheDocument();
+    expect(editor).toBeEnabled();
+  });
+
+  it("keeps progress that arrives before the exploration-start response", async () => {
+    const pending = deferredDisposition();
+    mockSubmit.mockReturnValue(pending.promise);
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(listenExplorationProgress).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(editor, { target: { value: "去玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+    act(() => explorationProgressListener({ taskId: "task-early", status: "reading" }));
+    await act(async () => {
+      pending.resolve({ kind: "explorationStarted", taskId: "task-early" });
+      await pending.promise;
+    });
+
+    expect(screen.getByText("AIbb 正在阅读～")).toBeVisible();
+    expect(screen.queryByText("AIbb 出发，去玩～")).not.toBeInTheDocument();
+  });
+
+  it("keeps a completion that arrives before the exploration-start response", async () => {
+    const pending = deferredDisposition();
+    mockSubmit.mockReturnValue(pending.promise);
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(listenExplorationComplete).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(editor, { target: { value: "去海里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+    act(() => explorationCompleteListener({ taskId: "task-early", result: diaryResult }));
+    await act(async () => {
+      pending.resolve({ kind: "explorationStarted", taskId: "task-early" });
+      await pending.promise;
+    });
+
+    expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
+    expect(screen.queryByText("AIbb 出发，去玩～")).not.toBeInTheDocument();
+  });
+
+  it("keeps an error that arrives before the exploration-start response", async () => {
+    const pending = deferredDisposition();
+    mockSubmit.mockReturnValue(pending.promise);
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(listenExplorationError).toHaveBeenCalledTimes(1));
+
+    fireEvent.change(editor, { target: { value: "去玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+    act(() => explorationErrorListener({
+      taskId: "task-early",
+      code: "provider_unavailable",
+      message: "provider detail",
+    }));
+    await act(async () => {
+      pending.resolve({ kind: "explorationStarted", taskId: "task-early" });
+      await pending.promise;
+    });
+
+    expect(screen.getByText("模型服务暂时不可用，请稍后重试。")).toBeVisible();
+    expect(screen.queryByText("AIbb 出发，去玩～")).not.toBeInTheDocument();
+  });
+
+  it("keeps the first terminal outing event when a conflicting event arrives late", async () => {
+    mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-terminal" });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "去海里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await screen.findByText("AIbb 出发，去玩～");
+
+    act(() => explorationCompleteListener({ taskId: "task-terminal", result: diaryResult }));
+    expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
+
+    act(() => explorationErrorListener({
+      taskId: "task-terminal",
+      code: "provider_unavailable",
+      message: "late conflicting terminal event",
+    }));
+
+    expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
+    expect(screen.queryByText("模型服务暂时不可用，请稍后重试。")).not.toBeInTheDocument();
   });
 
   it("replaces an outing placeholder with a safe Chinese error", async () => {

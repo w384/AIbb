@@ -1,15 +1,17 @@
-use tauri::{AppHandle, WebviewWindow};
+use tauri::{AppHandle, Manager, WebviewWindow};
 
 use crate::{app_state::AppState, error::AppError, platform::window_controller};
 
 #[tauri::command]
 pub async fn toggle_chat_window(app: AppHandle) -> Result<(), AppError> {
-    window_controller::toggle_chat(&app)
+    let profile = app.state::<AppState>().settings.load_aibb_profile().await?;
+    window_controller::toggle_chat(&app, &profile.name)
 }
 
 #[tauri::command]
 pub async fn open_settings_window(app: AppHandle) -> Result<(), AppError> {
-    window_controller::open_settings(&app)
+    let profile = app.state::<AppState>().settings.load_aibb_profile().await?;
+    window_controller::open_settings(&app, &profile.name)
 }
 
 #[tauri::command]

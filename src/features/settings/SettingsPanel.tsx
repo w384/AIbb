@@ -53,7 +53,7 @@ function publicError(reason: unknown): AppErrorPayload {
     rate_limited: "请求过于频繁，请稍后再试。",
     request_timeout: "连接超时，请检查网络或 API 地址后重试。",
     provider_unavailable: "模型服务暂时不可用，请稍后再试。",
-    invalidSettings: "API 地址和模型名称不能为空，请填写后重试。",
+    invalidSettings: "API 地址必须使用 HTTPS，且模型名称不能为空。",
     invalid_request: "请求被模型服务拒绝，请检查 API 地址和模型名称。",
     credentialStoreUnavailable: "无法读取或保存 API Key，请检查系统凭据服务。",
     settingsRollbackFailed: "设置保存失败，并且无法恢复之前的设置。",
@@ -116,6 +116,8 @@ export function SettingsPanel() {
     }).then((unlisten) => {
       if (disposed) unlisten();
       else unlistenProfileUpdated = unlisten;
+    }).catch((reason: unknown) => {
+      if (!disposed) setProfileError(publicError(reason));
     });
     return () => {
       disposed = true;

@@ -11,10 +11,16 @@ const OUTING_DIARY_INSTRUCTION: &str = "依据提供的四条发现和证据，�
 pub fn build_outing_diary_request(
     findings: &ExplorationResult,
     evidence: &WebMaterial,
+    user_direction: Option<&str>,
 ) -> ChatRequest {
     let input = serde_json::json!({
         "findings": findings.items,
         "evidence": evidence.pages,
+        "outing": {
+            "userDirection": user_direction,
+            "roundNumber": findings.round_number,
+            "elapsedSeconds": findings.elapsed_seconds,
+        },
     });
     ChatRequest {
         messages: vec![
@@ -58,8 +64,8 @@ mod tests {
             items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
             diary: String::new(),
             sources: Vec::new(),
-            round_number: 0,
-            elapsed_seconds: 0,
+            round_number: 3,
+            elapsed_seconds: 17,
             raw_response: String::new(),
         };
         let evidence = WebMaterial {
@@ -72,7 +78,7 @@ mod tests {
             }],
         };
 
-        let request = build_outing_diary_request(&findings, &evidence);
+        let request = build_outing_diary_request(&findings, &evidence, Some("海里"));
 
         assert_eq!(request.messages.len(), 2);
         assert_eq!(request.messages[0].role, "system");
@@ -84,6 +90,11 @@ mod tests {
             .content
             .contains("https://example.com/evidence"));
         assert!(request.messages[1].content.contains("证据正文"));
+        assert!(request.messages[1].content.contains("海里"));
+        assert!(request.messages[1].content.contains("\"roundNumber\":3"));
+        assert!(request.messages[1]
+            .content
+            .contains("\"elapsedSeconds\":17"));
         for forbidden in ["固定题材", "笑话", "用户喜好", "情绪弧线", "再次出去玩"]
         {
             assert!(!request.messages[0].content.contains(forbidden));

@@ -9,8 +9,6 @@
     "allow-get-bootstrap-state",
     "allow-load-aibb-profile",
     "allow-open-settings-window",
-    "allow-submit-user-input",
-    "allow-start-exploration",
-    "allow-cancel-exploration"
+    "allow-submit-user-input"
   ]
 }

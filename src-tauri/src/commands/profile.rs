@@ -1,6 +1,9 @@
 use tauri::{AppHandle, Emitter, Manager, Runtime};
 
-use crate::{app_state::AppState, domain::AibbProfile, error::AppError};
+use crate::{
+    app_state::AppState, domain::AibbProfile, error::AppError,
+    platform::window_controller::profile_window_title,
+};
 
 pub const PROFILE_UPDATED_EVENT: &str = "profile://updated";
 
@@ -72,17 +75,17 @@ pub(crate) fn profile_window_updates(profile: &AibbProfile) -> [ProfileWindowUpd
     [
         ProfileWindowUpdate {
             label: "pet",
-            title: profile.name.clone(),
+            title: profile_window_title("pet", &profile.name),
             payload: profile,
         },
         ProfileWindowUpdate {
             label: "chat",
-            title: format!("{} Chat", profile.name),
+            title: profile_window_title("chat", &profile.name),
             payload: profile,
         },
         ProfileWindowUpdate {
             label: "settings",
-            title: format!("{} Settings", profile.name),
+            title: profile_window_title("settings", &profile.name),
             payload: profile,
         },
     ]

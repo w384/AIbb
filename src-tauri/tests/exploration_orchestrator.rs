@@ -8,7 +8,9 @@ use std::{
 
 use aibb_desktop_pet_lib::{
     commands::exploration::SettingsExplorationRuntimeFactory,
-    domain::{MemoryContext, Message, OutingSource, Role, SummaryCandidate, WebMode},
+    domain::{
+        ExplorationResult, MemoryContext, Message, OutingSource, Role, SummaryCandidate, WebMode,
+    },
     error::{AppError, ErrorCode},
     exploration::{
         parse_outing_command, ExplorationEvent, ExplorationEventSink, ExplorationOrchestrator,
@@ -24,7 +26,6 @@ use aibb_desktop_pet_lib::{
     web::{FetchedPage, PageFetcher, SearchProvider},
 };
 use async_trait::async_trait;
-use serde_json::json;
 use tempfile::TempDir;
 use tokio::{
     sync::{Mutex as AsyncMutex, Notify},
@@ -32,10 +33,6 @@ use tokio::{
 };
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
-use wiremock::{
-    matchers::{body_partial_json, header, method, path},
-    Mock, MockServer, Request as WiremockRequest, Respond, ResponseTemplate,
-};
 
 const VALID_RESULT: &str = r#"{"items":["甲","乙","丙","丁"]}"#;
 const THREE_ITEMS: &str = r#"{"items":["甲","乙","丙"]}"#;
@@ -113,27 +110,6 @@ impl ExplorationRuntimeFactory for PausingRuntimeFactory {
             self.release_runtime.notified().await;
         }
         Ok(runtime)
-    }
-}
-
-#[derive(Clone)]
-struct ChatCompletionSequence {
-    contents: Arc<StdMutex<VecDeque<String>>>,
-}
-
-impl ChatCompletionSequence {
-    fn new(contents: Vec<String>) -> Self {
-        Self {
-            contents: Arc::new(StdMutex::new(contents.into())),
-        }
-    }
-}
-
-impl Respond for ChatCompletionSequence {
-    fn respond(&self, _request: &WiremockRequest) -> ResponseTemplate {
-        let content = self.contents.lock().unwrap().pop_front().unwrap();
-        ResponseTemplate::new(200)
-            .set_body_json(json!({"choices": [{"message": {"content": content}}]}))
     }
 }
 
@@ -237,6 +213,7 @@ async fn wait_for_terminal(
 #[derive(Debug, Clone)]
 enum NativeStep {
     Completed(String),
+    CompletedWithoutSources(String),
     CompletedWithSources(String, Vec<OutingSource>),
     Unsupported,
     Error(ErrorCode),
@@ -247,6 +224,11 @@ enum NativeStep {
 enum CompleteStep {
     Text(String),
     Error(ErrorCode),
+    Wait {
+        entered: Arc<Notify>,
+        release: Arc<Notify>,
+        response: String,
+    },
     ExpectMessages {
         messages: Vec<ChatMessage>,
         response: String,
@@ -313,9 +295,19 @@ impl LlmTransport for FakeLlm {
             .lock()
             .unwrap()
             .push(LlmCall::Complete(request.messages.clone()));
-        match self.complete.lock().unwrap().pop_front().unwrap() {
+        let step = self.complete.lock().unwrap().pop_front().unwrap();
+        match step {
             CompleteStep::Text(value) => Ok(value),
             CompleteStep::Error(code) => Err(AppError::from_code(code)),
+            CompleteStep::Wait {
+                entered,
+                release,
+                response,
+            } => {
+                entered.notify_one();
+                release.notified().await;
+                Ok(response)
+            }
             CompleteStep::ExpectMessages { messages, response } => {
                 assert_eq!(request.messages, messages);
                 Ok(response)
@@ -337,6 +329,13 @@ impl LlmTransport for FakeLlm {
             .push(LlmCall::Native(request.input));
         match self.native.lock().unwrap().pop_front().unwrap() {
             NativeStep::Completed(text) => Ok(NativeWebOutcome::Completed {
+                text,
+                sources: vec![OutingSource {
+                    title: "默认可信来源".into(),
+                    url: "https://example.com/native-source".into(),
+                }],
+            }),
+            NativeStep::CompletedWithoutSources(text) => Ok(NativeWebOutcome::Completed {
                 text,
                 sources: Vec::new(),
             }),
@@ -613,6 +612,12 @@ fn outing_parser_recognizes_only_explicit_trimmed_forms() {
         ("去年很好玩", UserInputIntent::Chat),
         ("去中心化游戏很好玩", UserInputIntent::Chat),
         ("去留之间的博弈很好玩", UserInputIntent::Chat),
+        ("去哪里玩", UserInputIntent::Chat),
+        ("去哪里最好玩", UserInputIntent::Chat),
+        ("往哪里方向玩", UserInputIntent::Chat),
+        ("去公园好不好玩", UserInputIntent::Chat),
+        ("去什么地方玩", UserInputIntent::Chat),
+        ("去公园怎么玩", UserInputIntent::Chat),
         ("去游\u{200b}戏玩", UserInputIntent::Chat),
         ("去游\u{200e}戏玩", UserInputIntent::Chat),
         ("去游\u{202e}戏玩", UserInputIntent::Chat),
@@ -627,44 +632,43 @@ fn outing_parser_recognizes_only_explicit_trimmed_forms() {
 
 #[tokio::test]
 async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation() {
-    let old_server = MockServer::start().await;
-    let new_server = MockServer::start().await;
     let old_key = "sk-old-task-key";
     let new_key = "sk-new-task-key";
     let old_final = format!(r#"{{"items":["甲 {old_key}","乙","丙","丁"]}}"#);
 
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(header("authorization", format!("Bearer {old_key}")))
-        .and(body_partial_json(json!({"model": "old-model"})))
-        .respond_with(ChatCompletionSequence::new(vec![
-            query_envelope(&["旧任务查询"]),
-            old_final,
-            VALID_DIARY.to_string(),
-        ]))
-        .expect(3)
-        .mount(&old_server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .and(header("authorization", format!("Bearer {new_key}")))
-        .and(body_partial_json(json!({"model": "new-model"})))
-        .respond_with(ChatCompletionSequence::new(vec![
-            query_envelope(&["新任务查询"]),
-            VALID_RESULT.to_string(),
-            VALID_DIARY.to_string(),
-        ]))
-        .expect(3)
-        .mount(&new_server)
-        .await;
-
     let temp = tempfile::tempdir().unwrap();
     let database = Database::open(temp.path().join("aibb.sqlite3")).unwrap();
     let credentials = PausingSnapshotCredentialStore::with_key(old_key);
-    let settings = SettingsService::new(database.clone(), credentials.clone());
+    let observed_snapshots = Arc::new(StdMutex::new(Vec::new()));
+    let observed_by_factory = observed_snapshots.clone();
+    let old_final_by_factory = old_final.clone();
+    let settings = SettingsService::new_with_transport_factory(
+        database.clone(),
+        credentials.clone(),
+        move |settings, api_key| -> Arc<dyn LlmTransport> {
+            observed_by_factory.lock().unwrap().push((
+                settings.api_base.clone(),
+                settings.model.clone(),
+                api_key.clone(),
+            ));
+            let (query, findings) = if settings.model == "old-model" {
+                ("旧任务查询", old_final_by_factory.clone())
+            } else {
+                ("新任务查询", VALID_RESULT.to_string())
+            };
+            Arc::new(FakeLlm::scripted(
+                vec![],
+                vec![
+                    CompleteStep::Text(query_envelope(&[query])),
+                    CompleteStep::Text(findings),
+                    CompleteStep::Text(VALID_DIARY.to_string()),
+                ],
+            ))
+        },
+    );
     settings
         .save(SaveSettings {
-            api_base: format!("{}/v1", old_server.uri()),
+            api_base: "https://old.example/v1".into(),
             model: "old-model".into(),
             api_key: Some(old_key.into()),
             web_mode: WebMode::Off,
@@ -696,11 +700,10 @@ async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation()
     credentials.get_entered.notified().await;
     let mut rotating = tokio::spawn({
         let settings = settings.clone();
-        let new_base = format!("{}/v1", new_server.uri());
         async move {
             settings
                 .save(SaveSettings {
-                    api_base: new_base,
+                    api_base: "https://new.example/v1".into(),
                     model: "new-model".into(),
                     api_key: Some(new_key.into()),
                     web_mode: WebMode::Off,
@@ -736,6 +739,21 @@ async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation()
 
     let new_result = orchestrator.run(request(None)).await.unwrap();
     assert_eq!(new_result.items, ["甲", "乙", "丙", "丁"]);
+    assert_eq!(
+        observed_snapshots.lock().unwrap().as_slice(),
+        &[
+            (
+                "https://old.example/v1".to_string(),
+                "old-model".to_string(),
+                Some(old_key.to_string()),
+            ),
+            (
+                "https://new.example/v1".to_string(),
+                "new-model".to_string(),
+                Some(new_key.to_string()),
+            ),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -948,9 +966,58 @@ async fn successful_outing_persists_a_diary_with_four_items_safe_sources_round_a
     assert_eq!(second.round_number, 2);
     let persisted = harness.latest_record().await;
     assert_eq!(persisted.diary.as_deref(), Some("我带着四样见闻回来啦。"));
-    assert_eq!(persisted.sources, Some(Vec::new()));
+    assert_eq!(persisted.sources.as_ref().map(Vec::len), Some(1));
     assert_eq!(persisted.round_number, Some(2));
     assert_eq!(persisted.elapsed_seconds, Some(second.elapsed_seconds));
+}
+
+#[tokio::test]
+async fn native_outing_without_a_validated_source_fails_before_diary_synthesis() {
+    let harness = Harness::new(
+        WebMode::Auto,
+        FakeLlm::scripted(
+            vec![NativeStep::CompletedWithoutSources(VALID_RESULT.into())],
+            vec![CompleteStep::Text(VALID_DIARY.into())],
+        ),
+    );
+
+    let error = harness.orchestrator.run(request(None)).await.unwrap_err();
+
+    assert_eq!(error.code, "missing_outing_sources");
+    assert_eq!(harness.llm.calls().len(), 1);
+    assert!(harness
+        .memory_repository
+        .recent_messages(10)
+        .await
+        .unwrap()
+        .is_empty());
+}
+
+#[tokio::test]
+async fn public_outing_without_a_validated_page_fails_before_findings_generation() {
+    let harness = Harness::new(
+        WebMode::Off,
+        FakeLlm::scripted(
+            vec![],
+            vec![
+                CompleteStep::Text(query_envelope(&["无结果查询"])),
+                CompleteStep::Text(VALID_RESULT.into()),
+                CompleteStep::Text(VALID_DIARY.into()),
+            ],
+        ),
+    );
+    harness.web.set_results("无结果查询", Vec::new());
+
+    let error = harness.orchestrator.run(request(None)).await.unwrap_err();
+
+    assert_eq!(error.code, "missing_outing_sources");
+    assert_eq!(harness.llm.calls().len(), 1);
+    assert!(harness
+        .memory_repository
+        .recent_messages(10)
+        .await
+        .unwrap()
+        .is_empty());
 }
 
 #[tokio::test]
@@ -1195,6 +1262,40 @@ async fn success_atomically_persists_results_safe_raw_and_assistant_memory() {
     assert_eq!(messages.len(), 1);
     assert_eq!(messages[0].role, Role::Assistant);
     assert_eq!(messages[0].content, "我带着四样见闻回来啦。");
+}
+
+#[tokio::test]
+async fn outing_direction_is_redacted_before_storage_or_model_context() {
+    let harness = Harness::new(
+        WebMode::Auto,
+        FakeLlm::scripted(
+            vec![NativeStep::Completed(VALID_RESULT.into())],
+            vec![CompleteStep::Text(VALID_DIARY.into())],
+        ),
+    );
+
+    harness
+        .orchestrator
+        .run(request(Some("海里 configured-secret")))
+        .await
+        .unwrap();
+
+    let persisted = harness.latest_record().await;
+    assert_eq!(persisted.user_direction.as_deref(), Some("海里 [REDACTED]"));
+    let model_text = harness
+        .llm
+        .calls()
+        .iter()
+        .flat_map(|call| match call {
+            LlmCall::Native(text) => vec![text.clone()],
+            LlmCall::Complete(messages) => messages
+                .iter()
+                .map(|message| message.content.clone())
+                .collect(),
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(!model_text.contains("configured-secret"));
 }
 
 #[tokio::test]
@@ -1558,14 +1659,155 @@ async fn cancellation_stops_fetching_and_is_idempotent_but_terminal_tasks_are_re
 }
 
 #[tokio::test]
+async fn a_second_outing_is_rejected_while_the_first_is_active() {
+    let harness = Harness::new(
+        WebMode::Off,
+        FakeLlm::scripted(
+            vec![],
+            vec![CompleteStep::Text(query_envelope(&["慢查询"]))],
+        ),
+    )
+    .use_cancel_aware_fetcher();
+    let first = harness.orchestrator.start(request(None)).await.unwrap();
+    harness.web.shared.fetch_started.notified().await;
+
+    let error = harness
+        .orchestrator
+        .start(request(Some("另一个方向")))
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "exploration_already_running");
+    harness.orchestrator.cancel(first).await.unwrap();
+}
+
+#[tokio::test]
+async fn clearing_memory_cancels_an_active_outing_before_removing_its_record() {
+    let harness = Harness::new(
+        WebMode::Off,
+        FakeLlm::scripted(
+            vec![],
+            vec![CompleteStep::Text(query_envelope(&["慢查询"]))],
+        ),
+    )
+    .use_cancel_aware_fetcher();
+    let task_id = harness.orchestrator.start(request(None)).await.unwrap();
+    harness.web.shared.fetch_started.notified().await;
+
+    harness
+        .orchestrator
+        .cancel_all_and_clear_memory(&harness.memory_repository)
+        .await
+        .unwrap();
+
+    assert!(harness.events.emitted.lock().unwrap().iter().any(|event| {
+        matches!(
+            event,
+            ExplorationEvent::Error { task_id: emitted_id, code, .. }
+                if *emitted_id == task_id && code == "cancelled"
+        )
+    }));
+    assert!(harness.database.load(task_id).await.unwrap().is_none());
+}
+
+#[tokio::test]
+async fn cancel_all_stops_a_post_completion_summary_before_memory_can_be_cleared() {
+    let summary_entered = Arc::new(Notify::new());
+    let release_summary = Arc::new(Notify::new());
+    let memory = Arc::new(FakeMemory::with_summary_candidate());
+    let harness = Harness::with_memory(
+        WebMode::Auto,
+        FakeLlm::scripted(
+            vec![NativeStep::Completed(VALID_RESULT.into())],
+            vec![
+                CompleteStep::Text(VALID_DIARY.into()),
+                CompleteStep::Wait {
+                    entered: summary_entered.clone(),
+                    release: release_summary.clone(),
+                    response: "不应在清空后保存的摘要".into(),
+                },
+            ],
+        ),
+        memory.clone(),
+    );
+    let running = tokio::spawn({
+        let orchestrator = harness.orchestrator.clone();
+        async move { orchestrator.run(request(None)).await }
+    });
+    summary_entered.notified().await;
+
+    assert_eq!(harness.orchestrator.cancel_all().await.unwrap(), 0);
+    release_summary.notify_one();
+    running.await.unwrap().unwrap();
+
+    assert!(memory.saved_summaries.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn completed_round_numbers_are_unique_at_the_storage_boundary() {
+    let temp = tempfile::tempdir().unwrap();
+    let database = Database::open(temp.path().join("aibb.sqlite3")).unwrap();
+    let first = Uuid::new_v4();
+    let second = Uuid::new_v4();
+    let result = ExplorationResult {
+        items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
+        diary: "日记".into(),
+        sources: vec![OutingSource {
+            title: "可信来源".into(),
+            url: "https://example.com/source".into(),
+        }],
+        round_number: 1,
+        elapsed_seconds: 1,
+        raw_response: VALID_RESULT.into(),
+    };
+
+    for task_id in [first, second] {
+        database.create_queued(task_id, None).await.unwrap();
+        database
+            .transition(task_id, ExplorationStatus::Choosing)
+            .await
+            .unwrap();
+        database
+            .transition(task_id, ExplorationStatus::PublicSearching)
+            .await
+            .unwrap();
+        database
+            .transition(task_id, ExplorationStatus::Reading)
+            .await
+            .unwrap();
+        database
+            .transition(task_id, ExplorationStatus::Writing)
+            .await
+            .unwrap();
+        if task_id == first {
+            database
+                .complete(task_id, &result, &result.raw_response)
+                .await
+                .unwrap();
+        }
+    }
+
+    let error = database
+        .complete(second, &result, &result.raw_response)
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, "exploration_storage_unavailable");
+    assert_eq!(
+        database.load(second).await.unwrap().unwrap().status,
+        ExplorationStatus::Writing
+    );
+}
+
+#[tokio::test]
 async fn recovery_atomically_interrupts_only_nonterminal_rows_and_is_idempotent() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("aibb.sqlite3");
     let database = Database::open(&path).unwrap();
-    let queued = Uuid::new_v4();
     let writing = Uuid::new_v4();
     let terminal = Uuid::new_v4();
-    database.create_queued(queued, None).await.unwrap();
+    database.create_queued(terminal, None).await.unwrap();
+    database.cancel(terminal).await.unwrap();
     database.create_queued(writing, Some("方向")).await.unwrap();
     database
         .transition(writing, ExplorationStatus::Choosing)
@@ -1583,8 +1825,6 @@ async fn recovery_atomically_interrupts_only_nonterminal_rows_and_is_idempotent(
         .transition(writing, ExplorationStatus::Writing)
         .await
         .unwrap();
-    database.create_queued(terminal, None).await.unwrap();
-    database.cancel(terminal).await.unwrap();
 
     let orchestrator = ExplorationOrchestrator::new(
         Arc::new(database.clone()),
@@ -1596,16 +1836,12 @@ async fn recovery_atomically_interrupts_only_nonterminal_rows_and_is_idempotent(
         WebMode::Off,
         ExplorationTaskCredential::exact("configured-secret"),
     );
-    assert_eq!(orchestrator.recover_interrupted().await.unwrap(), 2);
+    assert_eq!(orchestrator.recover_interrupted().await.unwrap(), 1);
     assert_eq!(orchestrator.recover_interrupted().await.unwrap(), 0);
     drop(orchestrator);
     drop(database);
 
     let reopened = Database::open(path).unwrap();
-    assert_eq!(
-        reopened.load(queued).await.unwrap().unwrap().status,
-        ExplorationStatus::Interrupted
-    );
     assert_eq!(
         reopened.load(writing).await.unwrap().unwrap().status,
         ExplorationStatus::Interrupted

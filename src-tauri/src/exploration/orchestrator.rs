@@ -59,7 +59,7 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
         .strip_prefix('往')
         .and_then(|value| value.strip_suffix("方向玩"))
         .map(str::trim)
-        .filter(|value| is_safe_direction(value))
+        .filter(|value| is_explicit_outing_direction(value))
     {
         return UserInputIntent::Explore {
             direction: Some(direction.to_string()),
@@ -70,8 +70,7 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
         .strip_prefix('去')
         .and_then(|value| value.strip_suffix('玩'))
         .filter(|value| *value == value.trim())
-        .filter(|value| is_safe_direction(value))
-        .filter(|value| !is_obvious_statement(value))
+        .filter(|value| is_explicit_outing_direction(value))
     {
         return UserInputIntent::Explore {
             direction: Some(direction.to_string()),
@@ -81,12 +80,18 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     UserInputIntent::Chat
 }
 
-fn is_obvious_statement(direction: &str) -> bool {
-    direction.ends_with("很好") || direction.ends_with("真好")
+fn is_explicit_outing_direction(direction: &str) -> bool {
+    is_safe_direction(direction)
+        && !["哪里", "哪儿", "什么", "怎么", "为何", "为什么", "好不好"]
+            .iter()
+            .any(|marker| direction.contains(marker))
+        && !direction.ends_with("很好")
+        && !direction.ends_with("真好")
 }
 
 fn is_safe_direction(direction: &str) -> bool {
     !direction.is_empty()
+        && direction.chars().count() <= 200
         && !direction
             .chars()
             .any(|character| character.is_control() || is_unicode_format(character))
@@ -451,6 +456,7 @@ pub struct ExplorationOrchestrator {
     events: Arc<dyn ExplorationEventSink>,
     notifier: Arc<dyn Notifier>,
     cancellations: Arc<Mutex<HashMap<Uuid, CancellationToken>>>,
+    lifecycle: Arc<tokio::sync::Mutex<()>>,
 }
 
 impl ExplorationOrchestrator {
@@ -495,23 +501,25 @@ impl ExplorationOrchestrator {
             events,
             notifier,
             cancellations: Arc::new(Mutex::new(HashMap::new())),
+            lifecycle: Arc::new(tokio::sync::Mutex::new(())),
         }
     }
 
     pub async fn start(&self, request: ExplorationRequest) -> Result<Uuid, AppError> {
-        let (task_id, cancellation) = self.prepare(&request).await?;
+        let (task_id, request, cancellation, runtime) = self.prepare(request).await?;
         let orchestrator = self.clone();
         tokio::spawn(async move {
             let _ = orchestrator
-                .execute_managed(task_id, request, cancellation)
+                .execute_managed(task_id, request, cancellation, runtime)
                 .await;
         });
         Ok(task_id)
     }
 
     pub async fn run(&self, request: ExplorationRequest) -> Result<ExplorationResult, AppError> {
-        let (task_id, cancellation) = self.prepare(&request).await?;
-        self.execute_managed(task_id, request, cancellation).await
+        let (task_id, request, cancellation, runtime) = self.prepare(request).await?;
+        self.execute_managed(task_id, request, cancellation, runtime)
+            .await
     }
 
     pub async fn cancel(&self, task_id: Uuid) -> Result<(), AppError> {
@@ -536,14 +544,65 @@ impl ExplorationOrchestrator {
         }
     }
 
+    pub async fn cancel_all(&self) -> Result<usize, AppError> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.cancel_all_unlocked().await
+    }
+
+    pub async fn cancel_all_and_clear_memory(
+        &self,
+        memory: &MemoryRepository,
+    ) -> Result<(), AppError> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.cancel_all_unlocked().await?;
+        memory.clear_memory().await
+    }
+
+    async fn cancel_all_unlocked(&self) -> Result<usize, AppError> {
+        let active = self
+            .cancellations
+            .lock()
+            .map_err(|_| state_error())?
+            .iter()
+            .map(|(task_id, token)| (*task_id, token.clone()))
+            .collect::<Vec<_>>();
+        let mut cancelled = 0;
+        for (task_id, token) in active {
+            token.cancel();
+            match self.store.cancel(task_id).await? {
+                CancelOutcome::Cancelled => {
+                    self.emit_error(task_id, AppError::from_code(ErrorCode::Cancelled))
+                        .await;
+                    cancelled += 1;
+                }
+                CancelOutcome::AlreadyCancelled => {}
+                CancelOutcome::NotCancellable | CancelOutcome::NotFound => {}
+            }
+        }
+        Ok(cancelled)
+    }
+
     pub async fn recover_interrupted(&self) -> Result<usize, AppError> {
         self.store.recover_interrupted().await
     }
 
     async fn prepare(
         &self,
-        request: &ExplorationRequest,
-    ) -> Result<(Uuid, CancellationToken), AppError> {
+        mut request: ExplorationRequest,
+    ) -> Result<
+        (
+            Uuid,
+            ExplorationRequest,
+            CancellationToken,
+            ExplorationTaskRuntime,
+        ),
+        AppError,
+    > {
+        let _lifecycle = self.lifecycle.lock().await;
+        let runtime = self.runtime_factory.create().await?;
+        request.direction = request
+            .direction
+            .map(|direction| sanitize_sensitive_text(&direction, runtime.credential.exact_key()));
         let task_id = Uuid::new_v4();
         self.store
             .create_queued(task_id, request.direction.as_deref())
@@ -553,7 +612,7 @@ impl ExplorationOrchestrator {
             .lock()
             .map_err(|_| state_error())?
             .insert(task_id, cancellation.clone());
-        Ok((task_id, cancellation))
+        Ok((task_id, request, cancellation, runtime))
     }
 
     async fn execute_managed(
@@ -561,8 +620,9 @@ impl ExplorationOrchestrator {
         task_id: Uuid,
         request: ExplorationRequest,
         cancellation: CancellationToken,
+        runtime: ExplorationTaskRuntime,
     ) -> Result<ExplorationResult, AppError> {
-        let result = self.execute(task_id, request, cancellation).await;
+        let result = self.execute(task_id, request, cancellation, runtime).await;
         self.cancellations
             .lock()
             .map_err(|_| state_error())?
@@ -603,10 +663,10 @@ impl ExplorationOrchestrator {
         task_id: Uuid,
         request: ExplorationRequest,
         cancellation: CancellationToken,
+        runtime: ExplorationTaskRuntime,
     ) -> Result<ExplorationResult, AppError> {
         let started_at = Instant::now();
         ensure_not_cancelled(&cancellation)?;
-        let runtime = self.runtime_factory.create().await?;
         let context = self
             .memory
             .build_context(request.direction.clone().unwrap_or_default())
@@ -634,14 +694,17 @@ impl ExplorationOrchestrator {
                     .await
                 {
                     Ok(NativeWebOutcome::Completed { text, sources }) => {
-                        self.progress(task_id, ExplorationStatus::Writing).await?;
                         let pages = sources
                             .into_iter()
                             .map(|source| WebPageMaterial {
                                 source,
                                 text: String::new(),
                             })
-                            .collect();
+                            .collect::<Vec<_>>();
+                        if pages.is_empty() {
+                            return Err(missing_sources_error());
+                        }
+                        self.progress(task_id, ExplorationStatus::Writing).await?;
                         (text, WebMaterial { pages })
                     }
                     Ok(NativeWebOutcome::Unsupported) if web_mode == WebMode::Auto => {
@@ -702,11 +765,16 @@ impl ExplorationOrchestrator {
 
         result = sanitize_result(result, &runtime.credential);
         let web_material = sanitize_web_material(web_material, &runtime.credential);
+        if web_material.pages.is_empty() {
+            return Err(missing_sources_error());
+        }
         ensure_not_cancelled(&cancellation)?;
+        result.round_number = self.store.completed_outings().await?.saturating_add(1);
+        result.elapsed_seconds = started_at.elapsed().as_secs();
         let diary_raw = runtime
             .llm
             .complete(
-                build_outing_diary_request(&result, &web_material),
+                build_outing_diary_request(&result, &web_material, request.direction.as_deref()),
                 cancellation.clone(),
             )
             .await?;
@@ -716,7 +784,6 @@ impl ExplorationOrchestrator {
             .iter()
             .map(|page| page.source.clone())
             .collect();
-        result.round_number = self.store.completed_outings().await?.saturating_add(1);
         result.elapsed_seconds = started_at.elapsed().as_secs();
         let result = sanitize_result(result, &runtime.credential);
         self.store
@@ -791,6 +858,9 @@ impl ExplorationOrchestrator {
             }
         }
 
+        if pages.is_empty() {
+            return Err(missing_sources_error());
+        }
         self.progress(task_id, ExplorationStatus::Writing).await?;
         let web_material = WebMaterial { pages };
         let prompt = build_exploration_prompt(context, web_material.clone());
@@ -815,6 +885,9 @@ impl ExplorationOrchestrator {
         runtime: &ExplorationTaskRuntime,
         cancellation: CancellationToken,
     ) {
+        if cancellation.is_cancelled() {
+            return;
+        }
         let Some(exact_key) = runtime.credential.exact_key() else {
             return;
         };
@@ -833,12 +906,16 @@ impl ExplorationOrchestrator {
                 ChatMessage::user(messages),
             ],
         };
-        let Ok(summary) = runtime.llm.complete(request, cancellation).await else {
+        let Ok(summary) = runtime.llm.complete(request, cancellation.clone()).await else {
             return;
         };
         let summary = sanitize_sensitive_text(&summary, Some(exact_key));
         let summary = summary.trim();
         if summary.is_empty() {
+            return;
+        }
+        let _lifecycle = self.lifecycle.lock().await;
+        if cancellation.is_cancelled() {
             return;
         }
         let _ = self
@@ -1034,6 +1111,13 @@ fn query_error() -> AppError {
     AppError::new(
         "invalid_query_envelope",
         "The model returned an invalid public-search query envelope.",
+    )
+}
+
+fn missing_sources_error() -> AppError {
+    AppError::new(
+        "missing_outing_sources",
+        "The outing did not obtain a validated public source.",
     )
 }
 

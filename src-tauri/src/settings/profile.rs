@@ -5,7 +5,7 @@ use std::{
 };
 
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use image::{ImageFormat, ImageReader, Limits};
+use image::{imageops::FilterType, ImageFormat, ImageReader, Limits};
 use uuid::Uuid;
 
 use crate::error::AppError;
@@ -14,12 +14,19 @@ pub(crate) const AVATAR_FILENAME: &str = "avatar.webp";
 pub(crate) const MAX_AVATAR_BYTES: usize = 5 * 1024 * 1024;
 const MAX_AVATAR_DIMENSION: u32 = 4096;
 const MAX_DECODED_AVATAR_BYTES: u64 = 64 * 1024 * 1024;
+const NORMALIZED_AVATAR_SIZE: u32 = 256;
 
 pub(crate) struct AvatarFileTransaction {
     target_path: PathBuf,
     backup_path: Option<PathBuf>,
     replacement_installed: bool,
     finished: bool,
+}
+
+enum AvatarLoadFailure {
+    Missing,
+    Invalid,
+    Unavailable,
 }
 
 trait FileRenamer {
@@ -59,6 +66,19 @@ pub(crate) fn normalize_avatar(bytes: &[u8], mime_type: &str) -> Result<Vec<u8>,
         _ => return Err(invalid_avatar_error()),
     };
     let image = decode_avatar(bytes, format).map_err(|_| invalid_avatar_error())?;
+    let crop_size = image.width().min(image.height());
+    let image = image
+        .crop_imm(
+            (image.width() - crop_size) / 2,
+            (image.height() - crop_size) / 2,
+            crop_size,
+            crop_size,
+        )
+        .resize_exact(
+            NORMALIZED_AVATAR_SIZE,
+            NORMALIZED_AVATAR_SIZE,
+            FilterType::Lanczos3,
+        );
     let mut normalized = Cursor::new(Vec::new());
     image
         .write_to(&mut normalized, ImageFormat::WebP)
@@ -186,7 +206,7 @@ fn restore_backup_by_copy(backup_path: &Path, target_path: &Path) -> Result<(), 
         .map_err(avatar_recovery_error_with)
 }
 
-pub(crate) fn load_avatar_data_url(
+pub(crate) fn load_or_recover_avatar_data_url(
     profile_directory: &Path,
     avatar_filename: Option<&str>,
 ) -> Result<Option<String>, AppError> {
@@ -198,17 +218,90 @@ pub(crate) fn load_avatar_data_url(
     }
 
     let path = profile_directory.join(AVATAR_FILENAME);
-    let metadata = fs::metadata(&path).map_err(|_| avatar_storage_error())?;
-    if metadata.len() > MAX_AVATAR_BYTES as u64 {
-        return Err(avatar_storage_error());
-    }
-    let bytes = fs::read(path).map_err(|_| avatar_storage_error())?;
-    if bytes.len() > MAX_AVATAR_BYTES {
-        return Err(avatar_storage_error());
-    }
-    decode_avatar(&bytes, ImageFormat::WebP).map_err(|_| avatar_storage_error())?;
+    let initial_failure = match load_avatar_bytes(&path) {
+        Ok(bytes) => {
+            cleanup_avatar_artifacts(profile_directory);
+            return Ok(Some(avatar_data_url(&bytes)));
+        }
+        Err(failure) => failure,
+    };
 
-    Ok(Some(avatar_data_url(&bytes)))
+    if let Some(bytes) = newest_valid_avatar_backup(profile_directory)? {
+        let transaction = AvatarFileTransaction::replace(profile_directory, Some(&bytes))?;
+        transaction.commit();
+        cleanup_avatar_artifacts(profile_directory);
+        return Ok(Some(avatar_data_url(&bytes)));
+    }
+
+    if matches!(initial_failure, AvatarLoadFailure::Unavailable) {
+        return Err(avatar_storage_error());
+    }
+
+    remove_if_present(Some(&path));
+    cleanup_avatar_artifacts(profile_directory);
+    Ok(None)
+}
+
+fn load_avatar_bytes(path: &Path) -> Result<Vec<u8>, AvatarLoadFailure> {
+    let metadata = fs::metadata(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AvatarLoadFailure::Missing
+        } else {
+            AvatarLoadFailure::Unavailable
+        }
+    })?;
+    if metadata.len() > MAX_AVATAR_BYTES as u64 {
+        return Err(AvatarLoadFailure::Invalid);
+    }
+    let bytes = fs::read(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            AvatarLoadFailure::Missing
+        } else {
+            AvatarLoadFailure::Unavailable
+        }
+    })?;
+    if bytes.len() > MAX_AVATAR_BYTES {
+        return Err(AvatarLoadFailure::Invalid);
+    }
+    decode_avatar(&bytes, ImageFormat::WebP).map_err(|_| AvatarLoadFailure::Invalid)?;
+
+    Ok(bytes)
+}
+
+fn newest_valid_avatar_backup(profile_directory: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    let entries = match fs::read_dir(profile_directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(_) => return Err(avatar_storage_error()),
+    };
+    let mut candidates = entries
+        .filter_map(Result::ok)
+        .filter(|entry| {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            name.starts_with(".avatar-") && name.ends_with(".backup")
+        })
+        .collect::<Vec<_>>();
+    candidates.sort_by_key(|entry| entry.metadata().and_then(|value| value.modified()).ok());
+    for candidate in candidates.into_iter().rev() {
+        if let Ok(bytes) = load_avatar_bytes(&candidate.path()) {
+            return Ok(Some(bytes));
+        }
+    }
+    Ok(None)
+}
+
+fn cleanup_avatar_artifacts(profile_directory: &Path) {
+    let Ok(entries) = fs::read_dir(profile_directory) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if name.starts_with(".avatar-") && (name.ends_with(".backup") || name.ends_with(".tmp")) {
+            remove_if_present(Some(&entry.path()));
+        }
+    }
 }
 
 pub(crate) fn avatar_data_url(bytes: &[u8]) -> String {

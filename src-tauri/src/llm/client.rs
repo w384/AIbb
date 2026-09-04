@@ -44,13 +44,6 @@ impl OpenAiClient {
         Self::from_shared_with_timeouts(settings, Arc::new(credentials), timeouts)
     }
 
-    pub(crate) fn from_shared(
-        settings: ApiSettings,
-        credentials: Arc<dyn CredentialStore>,
-    ) -> Self {
-        Self::from_shared_with_timeouts(settings, credentials, TransportTimeouts::default())
-    }
-
     fn from_shared_with_timeouts(
         settings: ApiSettings,
         credentials: Arc<dyn CredentialStore>,

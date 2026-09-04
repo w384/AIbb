@@ -622,7 +622,6 @@ pub enum InputDisposition {
     },
 }
 
-#[tauri::command]
 pub async fn start_chat(
     state: tauri::State<'_, AppState>,
     message: String,

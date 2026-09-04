@@ -73,6 +73,42 @@ impl CollectingSink {
     }
 }
 
+struct ConnectionTransport {
+    error: Option<ErrorCode>,
+}
+
+#[async_trait]
+impl LlmTransport for ConnectionTransport {
+    async fn stream_chat(
+        &self,
+        _request: ChatRequest,
+        _sink: &dyn DeltaSink,
+        _cancellation: CancellationToken,
+    ) -> Result<(), AppError> {
+        unreachable!("connection verification does not stream chat")
+    }
+
+    async fn complete(
+        &self,
+        _request: ChatRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<String, AppError> {
+        unreachable!("connection verification does not complete chat")
+    }
+
+    async fn try_native_web(
+        &self,
+        _request: NativeWebRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<NativeWebOutcome, AppError> {
+        unreachable!("connection verification does not use native web")
+    }
+
+    async fn test_connection(&self, _cancellation: CancellationToken) -> Result<(), AppError> {
+        self.error.map(AppError::from_code).map_or(Ok(()), Err)
+    }
+}
+
 fn settings(api_base: String) -> ApiSettings {
     ApiSettings {
         api_base,
@@ -725,17 +761,18 @@ async fn settings_does_not_mark_connection_verified_after_failed_authentication(
     let directory = tempfile::tempdir().unwrap();
     let database = Database::open(directory.path().join("settings.sqlite3")).unwrap();
     let vault = FakeCredentialStore::with_key(SECRET);
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/v1/models"))
-        .respond_with(ResponseTemplate::new(401).set_body_string("bad key"))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let service = SettingsService::new(database.clone(), vault);
+    let service = SettingsService::new_with_transport_factory(
+        database.clone(),
+        vault,
+        |_settings, _api_key| -> Arc<dyn LlmTransport> {
+            Arc::new(ConnectionTransport {
+                error: Some(ErrorCode::AuthenticationFailed),
+            })
+        },
+    );
     service
         .save(SaveSettings {
-            api_base: format!("{}/v1", server.uri()),
+            api_base: "https://provider.example/v1".into(),
             model: "configured-model".into(),
             api_key: None,
             web_mode: WebMode::Auto,
@@ -756,27 +793,16 @@ async fn settings_marks_connection_verified_after_valid_models_response() {
     let directory = tempfile::tempdir().unwrap();
     let database = Database::open(directory.path().join("settings.sqlite3")).unwrap();
     let vault = FakeCredentialStore::with_key(SECRET);
-    let server = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/v1/models"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "data": [{"id": "configured-model"}]
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    Mock::given(method("POST"))
-        .and(path("/v1/chat/completions"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "choices": [{"message": {"content": "OK"}}]
-        })))
-        .expect(1)
-        .mount(&server)
-        .await;
-    let service = SettingsService::new(database.clone(), vault);
+    let service = SettingsService::new_with_transport_factory(
+        database.clone(),
+        vault,
+        |_settings, _api_key| -> Arc<dyn LlmTransport> {
+            Arc::new(ConnectionTransport { error: None })
+        },
+    );
     service
         .save(SaveSettings {
-            api_base: format!("{}/v1", server.uri()),
+            api_base: "https://provider.example/v1".into(),
             model: "configured-model".into(),
             api_key: None,
             web_mode: WebMode::Auto,

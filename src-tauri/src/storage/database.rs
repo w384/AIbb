@@ -194,7 +194,13 @@ impl ExplorationStore for Database {
                 ],
             )
             .map(|_| ())
-            .map_err(|_| exploration_storage_error())
+            .map_err(|error| {
+                if is_constraint_violation(&error) {
+                    exploration_already_running_error()
+                } else {
+                    exploration_storage_error()
+                }
+            })
     }
 
     async fn transition(&self, id: Uuid, next: ExplorationStatus) -> Result<(), AppError> {
@@ -496,6 +502,21 @@ fn exploration_storage_error() -> AppError {
     AppError::new(
         "exploration_storage_unavailable",
         "The exploration task could not be stored.",
+    )
+}
+
+fn exploration_already_running_error() -> AppError {
+    AppError::new(
+        "exploration_already_running",
+        "Another outing is already running.",
+    )
+}
+
+fn is_constraint_violation(error: &rusqlite::Error) -> bool {
+    matches!(
+        error,
+        rusqlite::Error::SqliteFailure(failure, _)
+            if failure.code == rusqlite::ErrorCode::ConstraintViolation
     )
 }
 

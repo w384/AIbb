@@ -265,7 +265,7 @@ async fn profile_png_and_jpeg_inputs_are_returned_as_decodable_webp() {
         let webp = avatar_webp_bytes(&profile);
         let decoded = image::load_from_memory_with_format(&webp, ImageFormat::WebP).unwrap();
 
-        assert_eq!(decoded.dimensions(), (2, 2));
+        assert_eq!(decoded.dimensions(), (256, 256));
         assert_eq!(
             fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
             webp
@@ -331,7 +331,32 @@ async fn profile_avatar_reset_database_failure_restores_the_previous_avatar() {
 }
 
 #[tokio::test]
-async fn profile_required_load_failure_precedes_name_persistence() {
+async fn profile_load_recovers_a_valid_backup_left_by_an_interrupted_avatar_write() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    let saved = service
+        .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
+        .await
+        .unwrap();
+    let directory = db.app_data_dir().join("aibb-profile");
+    let target = directory.join("avatar.webp");
+    let backup = directory.join(".avatar-crash.backup");
+    fs::rename(&target, &backup).unwrap();
+
+    let recovered = service.load_aibb_profile().await.unwrap();
+
+    assert_eq!(recovered, saved);
+    assert!(target.exists());
+    assert!(!backup.exists());
+    assert_eq!(db.persisted_profile().1.as_deref(), Some("avatar.webp"));
+}
+
+#[tokio::test]
+async fn profile_load_falls_back_to_default_when_no_valid_owned_avatar_survives() {
     let db = TestDatabase::new();
     let service = SettingsService::new_with_app_data_dir(
         db.handle(),
@@ -342,22 +367,61 @@ async fn profile_required_load_failure_precedes_name_persistence() {
         .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
         .await
         .unwrap();
-    let oversized = vec![7_u8; 5 * 1024 * 1024 + 1];
-    fs::write(
-        db.app_data_dir().join("aibb-profile/avatar.webp"),
-        &oversized,
-    )
-    .unwrap();
+    fs::remove_file(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap();
+
+    let recovered = service.load_aibb_profile().await.unwrap();
+
+    assert_eq!(recovered.avatar_data_url, None);
+    assert_eq!(recovered.version, 2);
+    assert_eq!(db.persisted_profile(), ("AIbb".into(), None, 2));
+}
+
+#[tokio::test]
+async fn profile_load_falls_back_to_default_when_the_owned_avatar_is_corrupt() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    service
+        .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
+        .await
+        .unwrap();
+    let target = db.app_data_dir().join("aibb-profile/avatar.webp");
+    fs::write(&target, b"not a webp").unwrap();
+
+    let recovered = service.load_aibb_profile().await.unwrap();
+
+    assert_eq!(recovered.avatar_data_url, None);
+    assert_eq!(recovered.version, 2);
+    assert_eq!(db.persisted_profile(), ("AIbb".into(), None, 2));
+    assert!(!target.exists());
+}
+
+#[tokio::test]
+async fn profile_storage_access_failure_precedes_name_persistence() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+    service
+        .save_aibb_avatar(valid_webp_bytes(), "image/webp".into())
+        .await
+        .unwrap();
+    let profile_directory = db.app_data_dir().join("aibb-profile");
+    let preserved_directory = db.app_data_dir().join("aibb-profile-preserved");
+    fs::rename(&profile_directory, &preserved_directory).unwrap();
+    fs::write(&profile_directory, b"not a directory").unwrap();
     let previous_row = db.persisted_profile();
 
     let error = service.save_aibb_name("新名字".into()).await.unwrap_err();
 
     assert_eq!(error.code, "profileStorageUnavailable");
     assert_eq!(db.persisted_profile(), previous_row);
-    assert_eq!(
-        fs::read(db.app_data_dir().join("aibb-profile/avatar.webp")).unwrap(),
-        oversized
-    );
+    assert!(preserved_directory.join("avatar.webp").exists());
 }
 
 #[tokio::test]
@@ -575,6 +639,36 @@ async fn rejects_a_blank_model_before_persisting_settings() {
 
     assert_eq!(error.code, "invalidSettings");
     assert!(db.handle().load_settings().unwrap().model.is_empty());
+}
+
+#[tokio::test]
+async fn rejects_non_https_or_credential_bearing_api_bases_before_persistence() {
+    for api_base in [
+        "http://example.test/v1",
+        "http://127.0.0.1:11434/v1",
+        "not a url",
+        "https://user:secret@example.test/v1",
+    ] {
+        let db = TestDatabase::new();
+        let vault = FakeCredentialStore::default();
+        let service = SettingsService::new(db.handle(), vault.clone());
+
+        let error = service
+            .save(SaveSettings {
+                api_base: api_base.into(),
+                model: "model-a".into(),
+                api_key: Some("must-not-be-saved".into()),
+                web_mode: WebMode::Auto,
+                always_on_top: true,
+                autostart: false,
+            })
+            .await
+            .unwrap_err();
+
+        assert_eq!(error.code, "invalidSettings", "api base: {api_base}");
+        assert!(db.handle().load_settings().unwrap().api_base.is_empty());
+        assert_eq!(vault.get().await.unwrap(), None);
+    }
 }
 
 #[tokio::test]

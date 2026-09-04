@@ -128,6 +128,20 @@ describe("SettingsPanel", () => {
     expect(unlistenProfile).toHaveBeenCalledTimes(1);
   });
 
+  it("handles profile-listener registration failure without an unhandled rejection", async () => {
+    vi.mocked(listenProfileUpdated).mockRejectedValueOnce({
+      code: "profileStorageUnavailable",
+      message: "native details must stay hidden",
+    });
+
+    render(<SettingsPanel />);
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "无法访问 AIbb 头像，请稍后再试。",
+    );
+    expect(screen.queryByText(/native details/)).not.toBeInTheDocument();
+  });
+
   it("does not change the displayed or persisted nickname when avatar save fails", async () => {
     vi.mocked(loadAibbProfile).mockResolvedValue({
       name: "原名",
