@@ -94,27 +94,38 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
 fn is_explicit_outing_direction(direction: &str) -> bool {
     is_safe_direction(direction)
         && direction != "方向"
-        && ![
-            "哪里",
-            "哪儿",
-            "什么",
-            "怎么",
-            "为何",
-            "为什么",
-            "好不好",
-            "是否",
-            "值不值得",
-            "是不是",
-            "能不能",
-            "可不可以",
-            "适不适合",
-        ]
+        && !is_question_or_evaluative_outing_clause(direction)
+}
+
+fn is_question_or_evaluative_outing_clause(candidate: &str) -> bool {
+    const INTERROGATIVE_BOUNDARIES: &[&str] = &["哪里", "哪儿", "什么"];
+    const POLAR_QUESTION_MARKERS: &[&str] = &["是否", "有没有"];
+    const QUESTION_PREDICATE_ENDINGS: &[&str] = &["怎么", "为何", "为什么", "能否"];
+    const EVALUATIVE_PREDICATE_ENDINGS: &[&str] = &["值得", "好"];
+
+    INTERROGATIVE_BOUNDARIES
         .iter()
-        .any(|marker| direction.contains(marker))
-        && !direction.ends_with("值得")
-        && !direction.ends_with("很好")
-        && !direction.ends_with("真好")
-        && !direction.ends_with("真的好")
+        .any(|marker| candidate.starts_with(marker) || candidate.ends_with(marker))
+        || POLAR_QUESTION_MARKERS
+            .iter()
+            .any(|marker| candidate.contains(marker))
+        || ends_with_a_not_a_predicate(candidate)
+        || QUESTION_PREDICATE_ENDINGS
+            .iter()
+            .any(|ending| candidate.ends_with(ending))
+        || EVALUATIVE_PREDICATE_ENDINGS
+            .iter()
+            .any(|ending| candidate.ends_with(ending))
+}
+
+fn ends_with_a_not_a_predicate(candidate: &str) -> bool {
+    let Some((before_negation, after_negation)) = candidate.rsplit_once('不') else {
+        return false;
+    };
+    let Some(repeated_head) = after_negation.chars().next() else {
+        return false;
+    };
+    before_negation.ends_with(repeated_head)
 }
 
 fn is_safe_direction(direction: &str) -> bool {
