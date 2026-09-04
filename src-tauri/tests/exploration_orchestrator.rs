@@ -563,6 +563,12 @@ fn outing_parser_recognizes_only_explicit_trimmed_forms() {
             },
         ),
         (
+            "去公园玩",
+            UserInputIntent::Explore {
+                direction: Some("公园".into()),
+            },
+        ),
+        (
             "去游戏方向玩",
             UserInputIntent::Explore {
                 direction: Some("游戏方向".into()),
@@ -572,6 +578,12 @@ fn outing_parser_recognizes_only_explicit_trimmed_forms() {
             "往 游戏 方向玩",
             UserInputIntent::Explore {
                 direction: Some("游戏".into()),
+            },
+        ),
+        (
+            "往北玩",
+            UserInputIntent::Explore {
+                direction: Some("北".into()),
             },
         ),
         (
@@ -616,6 +628,9 @@ fn outing_parser_recognizes_only_explicit_trimmed_forms() {
         ("去哪里最好玩", UserInputIntent::Chat),
         ("往哪里方向玩", UserInputIntent::Chat),
         ("去公园好不好玩", UserInputIntent::Chat),
+        ("去公园是否值得玩", UserInputIntent::Chat),
+        ("去公园值不值得玩", UserInputIntent::Chat),
+        ("去公园真的好玩", UserInputIntent::Chat),
         ("去什么地方玩", UserInputIntent::Chat),
         ("去公园怎么玩", UserInputIntent::Chat),
         ("去游\u{200b}戏玩", UserInputIntent::Chat),

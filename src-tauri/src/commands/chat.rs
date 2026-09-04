@@ -142,15 +142,24 @@ impl ChatService {
 
         let runtime = self.runtime_factory.create().await?;
         let message = sanitize_sensitive_text(&message, runtime.exact_key.as_deref());
+        let memory_generation = self.memory.generation();
         let context = ContextBuilder::new(self.memory.clone())
             .build(message.clone())
             .await?;
-        self.memory.append(Role::User, message).await?;
+        if self
+            .memory
+            .append_if_generation(memory_generation, Role::User, message)
+            .await?
+            .is_none()
+        {
+            return Err(AppError::from_code(ErrorCode::Cancelled));
+        }
 
         Ok(PreparedChat {
             request_id,
             context,
             runtime,
+            memory_generation,
         })
     }
 
@@ -193,7 +202,14 @@ impl ChatService {
             return Err(AppError::from_code(ErrorCode::InvalidResponse));
         }
 
-        self.memory.append(Role::Assistant, reply.clone()).await?;
+        if self
+            .memory
+            .append_if_generation(prepared.memory_generation, Role::Assistant, reply.clone())
+            .await?
+            .is_none()
+        {
+            return Err(AppError::from_code(ErrorCode::Cancelled));
+        }
         self.events
             .emit(ChatEvent::Complete {
                 request_id: prepared.request_id,
@@ -237,6 +253,7 @@ struct PreparedChat {
     request_id: String,
     context: MemoryContext,
     runtime: ChatTaskRuntime,
+    memory_generation: u64,
 }
 
 fn chat_request(prompt: &ModelPrompt) -> ChatRequest {

@@ -9,6 +9,7 @@ use aibb_desktop_pet_lib::{
 };
 use async_trait::async_trait;
 use tempfile::TempDir;
+use tokio::sync::{Notify, Semaphore};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -66,6 +67,64 @@ impl LlmTransport for FakeLlm {
 }
 
 #[derive(Clone)]
+struct DelayedLlm {
+    started: Arc<Notify>,
+    release: Arc<Semaphore>,
+}
+
+impl DelayedLlm {
+    fn new() -> Self {
+        Self {
+            started: Arc::new(Notify::new()),
+            release: Arc::new(Semaphore::new(0)),
+        }
+    }
+
+    async fn wait_until_started(&self) {
+        self.started.notified().await;
+    }
+
+    fn release(&self) {
+        self.release.add_permits(1);
+    }
+}
+
+#[async_trait]
+impl LlmTransport for DelayedLlm {
+    async fn stream_chat(
+        &self,
+        _request: ChatRequest,
+        sink: &dyn DeltaSink,
+        _cancellation: CancellationToken,
+    ) -> Result<(), AppError> {
+        self.started.notify_one();
+        let permit = self.release.acquire().await.unwrap();
+        permit.forget();
+        sink.send("迟到的回复").await
+    }
+
+    async fn complete(
+        &self,
+        _request: ChatRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<String, AppError> {
+        Ok("unused".into())
+    }
+
+    async fn try_native_web(
+        &self,
+        _request: NativeWebRequest,
+        _cancellation: CancellationToken,
+    ) -> Result<NativeWebOutcome, AppError> {
+        panic!("chat must not request web access")
+    }
+
+    async fn test_connection(&self, _cancellation: CancellationToken) -> Result<(), AppError> {
+        panic!("chat must not run a connection test")
+    }
+}
+
+#[derive(Clone)]
 struct RecordingEvents {
     memory: MemoryRepository,
     events: Arc<Mutex<Vec<ChatEvent>>>,
@@ -105,6 +164,47 @@ fn memory() -> (TempDir, MemoryRepository) {
     let directory = tempfile::tempdir().unwrap();
     let database = Database::open(directory.path().join("aibb.sqlite3")).unwrap();
     (directory, MemoryRepository::new(database))
+}
+
+#[tokio::test]
+async fn clearing_memory_while_chat_is_in_flight_prevents_late_reply_repopulation() {
+    let (_directory, memory) = memory();
+    let events = RecordingEvents::new(memory.clone());
+    let llm = Arc::new(DelayedLlm::new());
+    let service = ChatService::new(
+        memory.clone(),
+        llm.clone(),
+        Arc::new(events.clone()),
+        Some("sk-secret".to_string()),
+    );
+    let chat = tokio::spawn(async move {
+        service
+            .run("清空前的问题".to_string(), "request-clear-race".to_string())
+            .await
+    });
+    llm.wait_until_started().await;
+
+    memory.clear_memory().await.unwrap();
+    llm.release();
+    let error = chat.await.unwrap().unwrap_err();
+
+    assert_eq!(error.code, "cancelled");
+    assert!(memory.recent_messages(10).await.unwrap().is_empty());
+    let recorded = events.snapshot();
+    assert!(recorded.iter().any(|event| matches!(
+        event,
+        ChatEvent::Delta { request_id, delta }
+            if request_id == "request-clear-race" && delta == "迟到的回复"
+    )));
+    assert!(recorded.iter().any(|event| matches!(
+        event,
+        ChatEvent::Error { request_id, code, .. }
+            if request_id == "request-clear-race" && code == "cancelled"
+    )));
+    assert!(!recorded.iter().any(|event| matches!(
+        event,
+        ChatEvent::Complete { request_id, .. } if request_id == "request-clear-race"
+    )));
 }
 
 #[tokio::test]

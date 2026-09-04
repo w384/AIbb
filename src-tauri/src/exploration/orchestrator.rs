@@ -67,6 +67,17 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     }
 
     if let Some(direction) = input
+        .strip_prefix('往')
+        .and_then(|value| value.strip_suffix('玩'))
+        .filter(|value| *value == value.trim())
+        .filter(|value| is_explicit_outing_direction(value))
+    {
+        return UserInputIntent::Explore {
+            direction: Some(direction.to_string()),
+        };
+    }
+
+    if let Some(direction) = input
         .strip_prefix('去')
         .and_then(|value| value.strip_suffix('玩'))
         .filter(|value| *value == value.trim())
@@ -82,11 +93,24 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
 
 fn is_explicit_outing_direction(direction: &str) -> bool {
     is_safe_direction(direction)
-        && !["哪里", "哪儿", "什么", "怎么", "为何", "为什么", "好不好"]
-            .iter()
-            .any(|marker| direction.contains(marker))
+        && direction != "方向"
+        && ![
+            "哪里",
+            "哪儿",
+            "什么",
+            "怎么",
+            "为何",
+            "为什么",
+            "好不好",
+            "是否",
+            "值不值得",
+            "值得",
+        ]
+        .iter()
+        .any(|marker| direction.contains(marker))
         && !direction.ends_with("很好")
         && !direction.ends_with("真好")
+        && !direction.ends_with("真的好")
 }
 
 fn is_safe_direction(direction: &str) -> bool {

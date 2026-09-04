@@ -7,7 +7,14 @@ interface AibbAvatarProps {
 export function AibbAvatar({ avatarDataUrl, className = "", name = "AIbb" }: AibbAvatarProps) {
   const avatarClassName = `aibb-avatar ${className}`.trim();
   if (avatarDataUrl) {
-    return <img alt={name} className={avatarClassName} src={avatarDataUrl} />;
+    return (
+      <img
+        alt={name}
+        className={avatarClassName}
+        src={avatarDataUrl}
+        style={{ borderRadius: "50%", overflow: "hidden" }}
+      />
+    );
   }
 
   return (

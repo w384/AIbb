@@ -1,6 +1,9 @@
 use std::{
     path::Path,
-    sync::Arc,
+    sync::{
+        atomic::{AtomicU64, Ordering},
+        Arc,
+    },
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -17,6 +20,7 @@ use crate::{
 pub struct MemoryRepository {
     database: Database,
     operation: Arc<AsyncMutex<()>>,
+    generation: Arc<AtomicU64>,
 }
 
 pub(super) struct ContextSnapshot {
@@ -34,7 +38,12 @@ impl MemoryRepository {
         Self {
             database,
             operation: Arc::new(AsyncMutex::new(())),
+            generation: Arc::new(AtomicU64::new(0)),
         }
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.generation.load(Ordering::SeqCst)
     }
 
     pub async fn append(
@@ -43,7 +52,23 @@ impl MemoryRepository {
         content: impl Into<String>,
     ) -> Result<Message, AppError> {
         let _operation = self.operation.lock().await;
-        let content = content.into();
+        self.append_locked(role, content.into())
+    }
+
+    pub(crate) async fn append_if_generation(
+        &self,
+        expected_generation: u64,
+        role: Role,
+        content: impl Into<String>,
+    ) -> Result<Option<Message>, AppError> {
+        let _operation = self.operation.lock().await;
+        if self.generation.load(Ordering::SeqCst) != expected_generation {
+            return Ok(None);
+        }
+        self.append_locked(role, content.into()).map(Some)
+    }
+
+    fn append_locked(&self, role: Role, content: String) -> Result<Message, AppError> {
         let connection = self.database.connection()?;
         let now = unix_milliseconds()?;
         let latest = connection
@@ -192,7 +217,9 @@ impl MemoryRepository {
             .execute("DELETE FROM explorations", [])
             .map_err(|_| memory_error())?;
 
-        transaction.commit().map_err(|_| memory_error())
+        transaction.commit().map_err(|_| memory_error())?;
+        self.generation.fetch_add(1, Ordering::SeqCst);
+        Ok(())
     }
 }
 
