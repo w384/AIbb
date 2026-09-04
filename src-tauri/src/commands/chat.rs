@@ -202,6 +202,7 @@ impl ChatService {
             return Err(AppError::from_code(ErrorCode::InvalidResponse));
         }
 
+        let completion_boundary = self.memory.lock_completion_boundary().await;
         if self
             .memory
             .append_if_generation(prepared.memory_generation, Role::Assistant, reply.clone())
@@ -216,6 +217,7 @@ impl ChatService {
                 message: reply,
             })
             .await?;
+        drop(completion_boundary);
         self.summarize_once(&prepared.runtime, cancellation).await;
         Ok(())
     }

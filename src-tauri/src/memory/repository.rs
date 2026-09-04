@@ -8,7 +8,7 @@ use std::{
 };
 
 use rusqlite::params;
-use tokio::sync::Mutex as AsyncMutex;
+use tokio::sync::{Mutex as AsyncMutex, OwnedMutexGuard};
 
 use crate::{
     domain::{Message, Role, SummaryCandidate},
@@ -20,6 +20,7 @@ use crate::{
 pub struct MemoryRepository {
     database: Database,
     operation: Arc<AsyncMutex<()>>,
+    completion_boundary: Arc<AsyncMutex<()>>,
     generation: Arc<AtomicU64>,
 }
 
@@ -38,12 +39,17 @@ impl MemoryRepository {
         Self {
             database,
             operation: Arc::new(AsyncMutex::new(())),
+            completion_boundary: Arc::new(AsyncMutex::new(())),
             generation: Arc::new(AtomicU64::new(0)),
         }
     }
 
     pub(crate) fn generation(&self) -> u64 {
         self.generation.load(Ordering::SeqCst)
+    }
+
+    pub(crate) async fn lock_completion_boundary(&self) -> OwnedMutexGuard<()> {
+        self.completion_boundary.clone().lock_owned().await
     }
 
     pub async fn append(
@@ -203,6 +209,7 @@ impl MemoryRepository {
     }
 
     pub async fn clear_memory(&self) -> Result<(), AppError> {
+        let _completion_boundary = self.completion_boundary.clone().lock_owned().await;
         let _operation = self.operation.lock().await;
         let mut connection = self.database.connection()?;
         let transaction = connection.transaction().map_err(|_| memory_error())?;

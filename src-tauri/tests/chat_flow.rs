@@ -9,7 +9,10 @@ use aibb_desktop_pet_lib::{
 };
 use async_trait::async_trait;
 use tempfile::TempDir;
-use tokio::sync::{Notify, Semaphore};
+use tokio::{
+    sync::{Notify, Semaphore},
+    time::{timeout, Duration},
+};
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -160,6 +163,56 @@ impl ChatEventSink for RecordingEvents {
     }
 }
 
+#[derive(Clone)]
+struct DelayedCompleteEvents {
+    memory: MemoryRepository,
+    complete_started: Arc<Notify>,
+    release_complete: Arc<Semaphore>,
+    events: Arc<Mutex<Vec<ChatEvent>>>,
+}
+
+impl DelayedCompleteEvents {
+    fn new(memory: MemoryRepository) -> Self {
+        Self {
+            memory,
+            complete_started: Arc::new(Notify::new()),
+            release_complete: Arc::new(Semaphore::new(0)),
+            events: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+
+    async fn wait_until_complete_started(&self) {
+        self.complete_started.notified().await;
+    }
+
+    fn release(&self) {
+        self.release_complete.add_permits(1);
+    }
+
+    fn snapshot(&self) -> Vec<ChatEvent> {
+        self.events.lock().unwrap().clone()
+    }
+}
+
+#[async_trait]
+impl ChatEventSink for DelayedCompleteEvents {
+    async fn emit(&self, event: ChatEvent) -> Result<(), AppError> {
+        if let ChatEvent::Complete { message, .. } = &event {
+            assert!(self
+                .memory
+                .recent_messages(10)
+                .await?
+                .iter()
+                .any(|persisted| persisted.content == *message));
+            self.complete_started.notify_one();
+            let permit = self.release_complete.acquire().await.unwrap();
+            permit.forget();
+        }
+        self.events.lock().unwrap().push(event);
+        Ok(())
+    }
+}
+
 fn memory() -> (TempDir, MemoryRepository) {
     let directory = tempfile::tempdir().unwrap();
     let database = Database::open(directory.path().join("aibb.sqlite3")).unwrap();
@@ -204,6 +257,53 @@ async fn clearing_memory_while_chat_is_in_flight_prevents_late_reply_repopulatio
     assert!(!recorded.iter().any(|event| matches!(
         event,
         ChatEvent::Complete { request_id, .. } if request_id == "request-clear-race"
+    )));
+}
+
+#[tokio::test]
+async fn clear_cannot_overtake_terminal_delivery_after_assistant_persistence() {
+    let (_directory, memory) = memory();
+    let events = DelayedCompleteEvents::new(memory.clone());
+    let service = ChatService::new(
+        memory.clone(),
+        Arc::new(FakeLlm::new(&["已落库回复"], Ok("unused"))),
+        Arc::new(events.clone()),
+        Some("sk-secret".to_string()),
+    );
+    let chat = tokio::spawn(async move {
+        service
+            .run("问题".to_string(), "request-terminal-race".to_string())
+            .await
+    });
+    events.wait_until_complete_started().await;
+
+    let memory_for_clear = memory.clone();
+    let clear_started = Arc::new(Notify::new());
+    let clear_started_by_task = clear_started.clone();
+    let mut clearing = tokio::spawn(async move {
+        clear_started_by_task.notify_one();
+        memory_for_clear.clear_memory().await
+    });
+    clear_started.notified().await;
+    let cleared_before_release = timeout(Duration::from_millis(250), &mut clearing)
+        .await
+        .is_ok();
+
+    events.release();
+    chat.await.unwrap().unwrap();
+    if !cleared_before_release {
+        clearing.await.unwrap().unwrap();
+    }
+
+    assert!(
+        !cleared_before_release,
+        "clear must wait until the persisted assistant reply's terminal event is delivered"
+    );
+    assert!(memory.recent_messages(10).await.unwrap().is_empty());
+    assert!(events.snapshot().iter().any(|event| matches!(
+        event,
+        ChatEvent::Complete { request_id, message }
+            if request_id == "request-terminal-race" && message == "已落库回复"
     )));
 }
 

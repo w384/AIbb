@@ -104,10 +104,14 @@ fn is_explicit_outing_direction(direction: &str) -> bool {
             "好不好",
             "是否",
             "值不值得",
-            "值得",
+            "是不是",
+            "能不能",
+            "可不可以",
+            "适不适合",
         ]
         .iter()
         .any(|marker| direction.contains(marker))
+        && !direction.ends_with("值得")
         && !direction.ends_with("很好")
         && !direction.ends_with("真好")
         && !direction.ends_with("真的好")
