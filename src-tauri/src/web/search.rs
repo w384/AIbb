@@ -1,6 +1,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD_NO_PAD as BASE64_STANDARD_NO_PAD, Engine as _};
 use futures_util::StreamExt;
 use scraper::{Html, Selector};
 use tokio::time::timeout;
@@ -198,15 +199,27 @@ fn result_url(href: &str) -> Option<Url> {
     let host = candidate.host_str().unwrap_or_default();
     let is_duckduckgo = host.eq_ignore_ascii_case("duckduckgo.com")
         || host.to_ascii_lowercase().ends_with(".duckduckgo.com");
+    let is_bing =
+        host.eq_ignore_ascii_case("bing.com") || host.to_ascii_lowercase().ends_with(".bing.com");
     let target = if is_duckduckgo && candidate.path() == "/l/" {
         let encoded = candidate.query_pairs().find(|(name, _)| name == "uddg")?.1;
         Url::parse(encoded.as_ref()).ok()?
+    } else if is_bing && candidate.path() == "/ck/a" {
+        bing_tracking_target(&candidate)?
     } else {
         candidate
     };
     let mut target = validate_url(target.as_str()).ok()?;
     target.set_fragment(None);
     Some(target)
+}
+
+fn bing_tracking_target(candidate: &Url) -> Option<Url> {
+    let encoded = candidate.query_pairs().find(|(name, _)| name == "u")?.1;
+    let payload = encoded.strip_prefix("a1")?;
+    let decoded = BASE64_STANDARD_NO_PAD.decode(payload).ok()?;
+    let destination = std::str::from_utf8(&decoded).ok()?;
+    Url::parse(destination).ok()
 }
 
 fn search_error(error: impl std::fmt::Display) -> AppError {
@@ -235,6 +248,18 @@ mod tests {
         assert_eq!(
             parse_result_links(body, 1).unwrap(),
             vec!["https://example.com/bing-result".to_string()]
+        );
+    }
+
+    #[test]
+    fn resolves_bing_tracking_links_to_the_public_result_page() {
+        let body = r#"
+            <li class="b_algo"><h2><a href="https://www.bing.com/ck/a?u=a1aHR0cHM6Ly96aC53aWtpcGVkaWEub3JnL3poLWNuLyVFNyU4MSVBQiVFNiU5OCU5Rg&amp;ntb=1">Mars</a></h2></li>
+        "#;
+
+        assert_eq!(
+            parse_result_links(body, 1).unwrap(),
+            vec!["https://zh.wikipedia.org/zh-cn/%E7%81%AB%E6%98%9F".to_string()]
         );
     }
 
