@@ -45,7 +45,7 @@ Existing positive regressions retain `去玩`, `去公园玩`, `往北玩`, and 
 - `cargo fmt --manifest-path src-tauri/Cargo.toml --check` — passed.
 - `pnpm typecheck` — passed.
 - `pnpm test` — 18 files, 122 tests passed; no type errors.
-- `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 174 tests passed (42 unit + 6 chat + 30 exploration + 27 LLM + 7 memory + 28 settings + 34 web).
+- `cargo test --manifest-path src-tauri/Cargo.toml --all-targets` — 177 tests passed (42 unit + 6 chat + 33 exploration + 27 LLM + 7 memory + 28 settings + 34 web).
 - `cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings -A linker_messages` — passed. `linker_messages` remains excluded only for MSVC's normal import-library creation notice.
 - `git diff --check` — passed.
 
