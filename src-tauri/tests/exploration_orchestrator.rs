@@ -1039,25 +1039,34 @@ async fn successful_outing_persists_a_diary_with_four_items_safe_sources_round_a
 }
 
 #[tokio::test]
-async fn native_outing_without_a_validated_source_fails_before_diary_synthesis() {
+async fn native_outing_without_sources_falls_back_to_validated_public_search_in_auto_mode() {
     let harness = Harness::new(
         WebMode::Auto,
         FakeLlm::scripted(
             vec![NativeStep::CompletedWithoutSources(VALID_RESULT.into())],
-            vec![CompleteStep::Text(VALID_DIARY.into())],
+            vec![
+                CompleteStep::Text(query_envelope(&["原生来源缺失回退"])),
+                CompleteStep::Text(VALID_RESULT.into()),
+                CompleteStep::Text(VALID_DIARY.into()),
+            ],
         ),
     );
 
-    let error = harness.orchestrator.run(request(None)).await.unwrap_err();
+    let result = harness.orchestrator.run(request(None)).await.unwrap();
 
-    assert_eq!(error.code, "missing_outing_sources");
-    assert_eq!(harness.llm.calls().len(), 1);
+    assert_eq!(result.items.len(), 4);
+    assert_eq!(result.sources.len(), 1);
+    assert_eq!(
+        harness.web.shared.searches.lock().unwrap().as_slice(),
+        &[("原生来源缺失回退".into(), 2)]
+    );
     assert!(harness
         .memory_repository
         .recent_messages(10)
         .await
         .unwrap()
-        .is_empty());
+        .iter()
+        .any(|message| message.content.contains(&result.diary)));
 }
 
 #[tokio::test]

@@ -751,6 +751,12 @@ impl ExplorationOrchestrator {
                     )
                     .await
                 {
+                    Ok(NativeWebOutcome::Completed { sources, .. })
+                        if sources.is_empty() && web_mode == WebMode::Auto =>
+                    {
+                        self.public_exploration(task_id, context, &runtime, cancellation.clone())
+                            .await?
+                    }
                     Ok(NativeWebOutcome::Completed { text, sources }) => {
                         let pages = sources
                             .into_iter()
