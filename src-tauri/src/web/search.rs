@@ -12,6 +12,7 @@ use crate::error::{AppError, ErrorCode};
 use super::validate_url;
 
 const SEARCH_ENDPOINT: &str = "https://html.duckduckgo.com/html/";
+const FALLBACK_SEARCH_ENDPOINT: &str = "https://www.bing.com/search";
 const USER_AGENT: &str = "AIbb/0.1 public-read-only";
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(12);
 const MAX_SEARCH_RESPONSE_BYTES: usize = 2_000_000;
@@ -24,13 +25,19 @@ pub trait SearchProvider: Send + Sync {
 pub struct DuckDuckGoHtmlSearch {
     http: reqwest::Client,
     endpoint: Url,
+    fallback_endpoint: Option<Url>,
     cancellation: CancellationToken,
 }
 
 impl DuckDuckGoHtmlSearch {
     pub fn new(cancellation: CancellationToken) -> Result<Self, AppError> {
         let http = build_search_client(reqwest::Client::builder())?;
-        Self::with_endpoint(http, SEARCH_ENDPOINT.to_owned(), cancellation)
+        Self::with_endpoints(
+            http,
+            SEARCH_ENDPOINT.to_owned(),
+            Some(FALLBACK_SEARCH_ENDPOINT.to_owned()),
+            cancellation,
+        )
     }
 
     #[doc(hidden)]
@@ -39,19 +46,50 @@ impl DuckDuckGoHtmlSearch {
         endpoint: String,
         cancellation: CancellationToken,
     ) -> Result<Self, AppError> {
+        Self::with_endpoints(http, endpoint, None, cancellation)
+    }
+
+    fn with_endpoints(
+        http: reqwest::Client,
+        endpoint: String,
+        fallback_endpoint: Option<String>,
+        cancellation: CancellationToken,
+    ) -> Result<Self, AppError> {
         let endpoint = Url::parse(&endpoint).map_err(|_| search_error("invalid endpoint"))?;
+        let fallback_endpoint = fallback_endpoint
+            .map(|endpoint| Url::parse(&endpoint).map_err(|_| search_error("invalid endpoint")))
+            .transpose()?;
         Ok(Self {
             http,
             endpoint,
+            fallback_endpoint,
             cancellation,
         })
     }
 
     async fn search_inner(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError> {
+        match self.search_endpoint(&self.endpoint, query, limit).await {
+            Ok(results) => Ok(results),
+            Err(error) if error.code == ErrorCode::PublicSearchUnavailable.as_str() => {
+                let Some(fallback_endpoint) = self.fallback_endpoint.as_ref() else {
+                    return Err(error);
+                };
+                self.search_endpoint(fallback_endpoint, query, limit).await
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn search_endpoint(
+        &self,
+        endpoint: &Url,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<String>, AppError> {
         if limit == 0 {
             return Ok(Vec::new());
         }
-        let mut url = self.endpoint.clone();
+        let mut url = endpoint.clone();
         url.query_pairs_mut().clear().append_pair("q", query);
         let response = tokio::select! {
             _ = self.cancellation.cancelled() => {
@@ -117,23 +155,27 @@ impl SearchProvider for DuckDuckGoHtmlSearch {
 
 fn parse_result_links(body: &str, limit: usize) -> Result<Vec<String>, AppError> {
     let document = Html::parse_document(body);
-    let selector =
-        Selector::parse("a.result__a[href]").expect("static search selector must be valid");
+    let selectors = [
+        Selector::parse("a.result__a[href]").expect("static search selector must be valid"),
+        Selector::parse("li.b_algo h2 a[href]").expect("static search selector must be valid"),
+    ];
     let mut seen = HashSet::new();
     let mut results = Vec::new();
 
-    for element in document.select(&selector) {
-        let Some(href) = element.value().attr("href") else {
-            continue;
-        };
-        let Some(url) = result_url(href) else {
-            continue;
-        };
-        let normalized = url.as_str().to_owned();
-        if seen.insert(normalized.clone()) {
-            results.push(normalized);
-            if results.len() == limit {
-                break;
+    for selector in &selectors {
+        for element in document.select(selector) {
+            let Some(href) = element.value().attr("href") else {
+                continue;
+            };
+            let Some(url) = result_url(href) else {
+                continue;
+            };
+            let normalized = url.as_str().to_owned();
+            if seen.insert(normalized.clone()) {
+                results.push(normalized);
+                if results.len() == limit {
+                    return Ok(results);
+                }
             }
         }
     }
@@ -180,10 +222,27 @@ mod tests {
         net::TcpListener,
         time::timeout,
     };
+    use tokio_util::sync::CancellationToken;
 
-    use super::build_search_client;
+    use super::{build_search_client, parse_result_links, DuckDuckGoHtmlSearch, SearchProvider};
+
+    #[test]
+    fn parses_bing_result_links_when_the_primary_search_markup_is_unavailable() {
+        let body = r#"
+            <li class="b_algo"><h2><a href="https://example.com/bing-result">Bing result</a></h2></li>
+        "#;
+
+        assert_eq!(
+            parse_result_links(body, 1).unwrap(),
+            vec!["https://example.com/bing-result".to_string()]
+        );
+    }
 
     async fn serve_once(listener: TcpListener, body: &'static str) {
+        serve_once_with_status(listener, "200 OK", body).await;
+    }
+
+    async fn serve_once_with_status(listener: TcpListener, status: &str, body: &'static str) {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut request = Vec::new();
         let mut buffer = [0_u8; 1024];
@@ -198,10 +257,41 @@ mod tests {
             }
         }
         let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            "HTTP/1.1 {status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
             body.len()
         );
         socket.write_all(response.as_bytes()).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn public_search_falls_back_after_primary_search_markup_is_unavailable() {
+        let primary = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let fallback = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let primary_endpoint = format!("http://{}/search", primary.local_addr().unwrap());
+        let fallback_endpoint = format!("http://{}/search", fallback.local_addr().unwrap());
+        let primary_task = tokio::spawn(serve_once_with_status(
+            primary,
+            "202 Accepted",
+            "<html>verification required</html>",
+        ));
+        let fallback_task = tokio::spawn(serve_once(
+            fallback,
+            r#"<li class="b_algo"><h2><a href="https://example.com/fallback">Fallback</a></h2></li>"#,
+        ));
+        let search = DuckDuckGoHtmlSearch::with_endpoints(
+            build_search_client(reqwest::Client::builder()).unwrap(),
+            primary_endpoint,
+            Some(fallback_endpoint),
+            CancellationToken::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            search.search("AIbb", 1).await.unwrap(),
+            vec!["https://example.com/fallback".to_string()]
+        );
+        primary_task.await.unwrap();
+        fallback_task.await.unwrap();
     }
 
     #[tokio::test]
