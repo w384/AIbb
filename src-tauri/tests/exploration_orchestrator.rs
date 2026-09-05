@@ -661,6 +661,42 @@ fn outing_parser_recognizes_only_explicit_trimmed_forms() {
     }
 }
 
+#[test]
+fn outing_parser_rejects_question_shells_around_the_complete_input() {
+    for input in ["去不去公园玩", "去公园玩不玩", "往不往北玩"] {
+        assert_eq!(
+            parse_outing_command(input),
+            UserInputIntent::Chat,
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn outing_parser_rejects_complete_repeated_question_predicates() {
+    for input in [
+        "去公园可以不可以玩",
+        "去公园应该不应该玩",
+        "去公园适合不适合玩",
+    ] {
+        assert_eq!(
+            parse_outing_command(input),
+            UserInputIntent::Chat,
+            "{input}"
+        );
+    }
+}
+
+#[test]
+fn outing_parser_allows_polar_markers_inside_direction_names() {
+    assert_eq!(
+        parse_outing_command("去《有没有人告诉你》音乐世界玩"),
+        UserInputIntent::Explore {
+            direction: Some("《有没有人告诉你》音乐世界".into()),
+        }
+    );
+}
+
 #[tokio::test]
 async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation() {
     let old_key = "sk-old-task-key";

@@ -51,7 +51,7 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     if matches!(input, "去玩" | "出去玩") {
         return UserInputIntent::Explore { direction: None };
     }
-    if input.starts_with("去年") {
+    if input.starts_with("去年") || is_question_outing_shell(input) {
         return UserInputIntent::Chat;
     }
 
@@ -91,6 +91,14 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
     UserInputIntent::Chat
 }
 
+fn is_question_outing_shell(input: &str) -> bool {
+    let input: Vec<char> = input.chars().collect();
+
+    input.starts_with(&['去', '不', '去'])
+        || input.starts_with(&['往', '不', '往'])
+        || input.ends_with(&['玩', '不', '玩'])
+}
+
 fn is_explicit_outing_direction(direction: &str) -> bool {
     is_safe_direction(direction)
         && direction != "方向"
@@ -99,16 +107,20 @@ fn is_explicit_outing_direction(direction: &str) -> bool {
 
 fn is_question_or_evaluative_outing_clause(candidate: &str) -> bool {
     const INTERROGATIVE_BOUNDARIES: &[&str] = &["哪里", "哪儿", "什么"];
-    const POLAR_QUESTION_MARKERS: &[&str] = &["是否", "有没有"];
-    const QUESTION_PREDICATE_ENDINGS: &[&str] = &["怎么", "为何", "为什么", "能否"];
+    const QUESTION_PREDICATE_ENDINGS: &[&str] = &[
+        "怎么",
+        "为何",
+        "为什么",
+        "能否",
+        "是否",
+        "有没有",
+        "有没有必要",
+    ];
     const EVALUATIVE_PREDICATE_ENDINGS: &[&str] = &["值得", "好"];
 
     INTERROGATIVE_BOUNDARIES
         .iter()
         .any(|marker| candidate.starts_with(marker) || candidate.ends_with(marker))
-        || POLAR_QUESTION_MARKERS
-            .iter()
-            .any(|marker| candidate.contains(marker))
         || ends_with_a_not_a_predicate(candidate)
         || QUESTION_PREDICATE_ENDINGS
             .iter()
@@ -119,13 +131,20 @@ fn is_question_or_evaluative_outing_clause(candidate: &str) -> bool {
 }
 
 fn ends_with_a_not_a_predicate(candidate: &str) -> bool {
-    let Some((before_negation, after_negation)) = candidate.rsplit_once('不') else {
+    let candidate: Vec<char> = candidate.chars().collect();
+    let Some(negation_index) = candidate.iter().rposition(|character| *character == '不') else {
         return false;
     };
-    let Some(repeated_head) = after_negation.chars().next() else {
+    let before_negation = &candidate[..negation_index];
+    let after_negation = &candidate[negation_index + 1..];
+    if after_negation.is_empty() {
         return false;
-    };
-    before_negation.ends_with(repeated_head)
+    }
+
+    let maximum_overlap = before_negation.len().min(after_negation.len());
+    (1..=maximum_overlap)
+        .rev()
+        .any(|length| before_negation.ends_with(&after_negation[..length]))
 }
 
 fn is_safe_direction(direction: &str) -> bool {
