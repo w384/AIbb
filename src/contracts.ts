@@ -20,6 +20,8 @@ export interface ApiSettings {
   webMode: WebMode;
   alwaysOnTop: boolean;
   autostart: boolean;
+  /** Custom personality (「性格定制」) injected into chat prompts. */
+  persona: string;
   apiConfigured: boolean;
 }
 
@@ -30,6 +32,7 @@ export interface SaveSettings {
   webMode: WebMode;
   alwaysOnTop: boolean;
   autostart: boolean;
+  persona: string;
 }
 
 export interface AppErrorPayload {
@@ -38,7 +41,7 @@ export interface AppErrorPayload {
 }
 
 export type InputDisposition =
-  | { kind: "chatStarted"; requestId: string }
+  | { kind: "chatStarted"; requestId: string; spontaneousTaskId?: string }
   | { kind: "explorationStarted"; taskId: string };
 
 export interface ChatDeltaEvent {
@@ -78,10 +81,18 @@ export interface OutingSource {
   url: string;
 }
 
+export interface ExplorationImage {
+  title: string;
+  pageUrl: string;
+  /** Embedded picture (data URL); the renderer never contacts the origin host. */
+  dataUrl: string;
+}
+
 export interface ExplorationResult {
   items: [string, string, string, string];
   diary: string;
   sources: OutingSource[];
+  images: ExplorationImage[];
   roundNumber: number;
   elapsedSeconds: number;
   rawResponse: string;
@@ -102,6 +113,7 @@ export type OutingTimelineMessage =
       taskId: string;
       content: string;
       sources: OutingSource[];
+      images: ExplorationImage[];
       roundNumber: number;
       elapsedSeconds: number;
     }

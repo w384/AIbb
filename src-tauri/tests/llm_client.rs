@@ -116,6 +116,7 @@ fn settings(api_base: String) -> ApiSettings {
         web_mode: WebMode::Auto,
         always_on_top: false,
         autostart: false,
+        persona: String::new(),
         api_configured: true,
     }
 }
@@ -942,6 +943,7 @@ async fn settings_does_not_mark_connection_verified_after_failed_authentication(
             web_mode: WebMode::Auto,
             always_on_top: false,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -972,6 +974,7 @@ async fn settings_marks_connection_verified_after_valid_models_response() {
             web_mode: WebMode::Auto,
             always_on_top: false,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap();

@@ -496,6 +496,7 @@ impl PageFetcher for FakeFetcher {
             title: format!("title {url}"),
             canonical_url: url.to_string(),
             text: format!("page {url}"),
+            image: None,
         })
     }
 }
@@ -742,6 +743,7 @@ async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation()
             web_mode: WebMode::Off,
             always_on_top: false,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -777,6 +779,7 @@ async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation()
                     web_mode: WebMode::Off,
                     always_on_top: false,
                     autostart: false,
+                    persona: String::new(),
                 })
                 .await
         }
@@ -1898,6 +1901,7 @@ async fn completed_round_numbers_are_unique_at_the_storage_boundary() {
             title: "可信来源".into(),
             url: "https://example.com/source".into(),
         }],
+        images: Vec::new(),
         round_number: 1,
         elapsed_seconds: 1,
         raw_response: VALID_RESULT.into(),

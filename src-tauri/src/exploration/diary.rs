@@ -12,6 +12,7 @@ pub fn build_outing_diary_request(
     findings: &ExplorationResult,
     evidence: &WebMaterial,
     user_direction: Option<&str>,
+    persona: &str,
 ) -> ChatRequest {
     let input = serde_json::json!({
         "findings": findings.items,
@@ -22,9 +23,15 @@ pub fn build_outing_diary_request(
             "elapsedSeconds": findings.elapsed_seconds,
         },
     });
+    let mut system = OUTING_DIARY_INSTRUCTION.to_string();
+    let persona = persona.trim();
+    if !persona.is_empty() {
+        system.push_str("\n\n【性格设定】");
+        system.push_str(persona);
+    }
     ChatRequest {
         messages: vec![
-            ChatMessage::new("system", OUTING_DIARY_INSTRUCTION),
+            ChatMessage::new("system", system),
             ChatMessage::user(input.to_string()),
         ],
     }
@@ -64,6 +71,7 @@ mod tests {
             items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
             diary: String::new(),
             sources: Vec::new(),
+            images: Vec::new(),
             round_number: 3,
             elapsed_seconds: 17,
             raw_response: String::new(),
@@ -78,12 +86,13 @@ mod tests {
             }],
         };
 
-        let request = build_outing_diary_request(&findings, &evidence, Some("海里"));
+        let request = build_outing_diary_request(&findings, &evidence, Some("海里"), "");
 
         assert_eq!(request.messages.len(), 2);
         assert_eq!(request.messages[0].role, "system");
         assert!(request.messages[0].content.contains("自然的中文出游日记"));
         assert!(request.messages[0].content.contains("只输出 JSON 对象"));
+        assert!(!request.messages[0].content.contains("【性格设定】"));
         assert!(request.messages[1].content.contains("甲"));
         assert!(request.messages[1].content.contains("可信资料"));
         assert!(request.messages[1]
@@ -99,6 +108,31 @@ mod tests {
         {
             assert!(!request.messages[0].content.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn diary_request_appends_a_custom_personality_when_provided() {
+        let findings = ExplorationResult {
+            items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
+            diary: String::new(),
+            sources: Vec::new(),
+            images: Vec::new(),
+            round_number: 1,
+            elapsed_seconds: 1,
+            raw_response: String::new(),
+        };
+        let evidence = WebMaterial { pages: Vec::new() };
+
+        let request = build_outing_diary_request(
+            &findings,
+            &evidence,
+            None,
+            "你是一只爱冒险的橘猫，话痨又嘴甜。",
+        );
+
+        assert!(request.messages[0]
+            .content
+            .contains("【性格设定】你是一只爱冒险的橘猫，话痨又嘴甜。"));
     }
 
     #[test]

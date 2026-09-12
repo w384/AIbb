@@ -88,6 +88,9 @@ const diaryResult = {
     { title: "可信来源甲", url: "https://example.com/one" },
     { title: "可信来源乙", url: "https://example.org/two" },
   ],
+  images: [
+    { title: "海边的日落", pageUrl: "https://example.com/sunset", dataUrl: "data:image/jpeg;base64,AQID" },
+  ],
   roundNumber: 2,
   elapsedSeconds: 17,
   rawResponse: "[omitted]",
@@ -261,6 +264,46 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("region", { name: "探索结果" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "允许出去玩" })).not.toBeInTheDocument();
     expect(mockSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("presents the pictures AIbb brought back as clickable cards", async () => {
+    mockSubmit.mockImplementation(async (_message) => ({
+      kind: "explorationStarted",
+      taskId: "task-1",
+    }));
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "去看海" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+
+    act(() => explorationCompleteListener({ taskId: "task-1", result: diaryResult }));
+
+    const gallery = await screen.findByLabelText("带回的图片");
+    const image = within(gallery).getByRole("img", { name: "海边的日落" });
+    expect(image).toHaveAttribute("src", "data:image/jpeg;base64,AQID");
+    expect(image.closest("a")).toHaveAttribute("href", "https://example.com/sunset");
+    expect(image.closest("a")).toHaveAttribute("target", "_blank");
+  });
+
+  it("shows the diary of a spontaneous outing next to the chat reply", async () => {
+    mockSubmit.mockImplementation(async (_message) => ({
+      kind: "chatStarted",
+      requestId: "req-1",
+      spontaneousTaskId: "task-spontaneous",
+    }));
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "最近有什么好玩的？" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+
+    expect(await screen.findByText("AIbb 偷偷溜出去玩啦～")).toBeVisible();
+    act(() =>
+      explorationCompleteListener({ taskId: "task-spontaneous", result: diaryResult }),
+    );
+    expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
+    expect(screen.queryByText("AIbb 偷偷溜出去玩啦～")).not.toBeInTheDocument();
   });
 
   it("shows a safe local message when another outing is already active", async () => {

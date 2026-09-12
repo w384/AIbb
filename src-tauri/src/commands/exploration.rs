@@ -51,8 +51,14 @@ impl ExplorationRuntimeFactory for SettingsExplorationRuntimeFactory {
             .map(|key| ExplorationTaskCredential::exact(key.clone()))
             .unwrap_or_else(ExplorationTaskCredential::missing);
         let web_mode = settings.web_mode;
+        let persona = settings.persona.clone();
         let llm = self.settings.exploration_transport(settings, api_key);
-        Ok(ExplorationTaskRuntime::new(llm, web_mode, credential))
+        Ok(ExplorationTaskRuntime::new(
+            llm,
+            web_mode,
+            credential,
+            persona,
+        ))
     }
 }
 

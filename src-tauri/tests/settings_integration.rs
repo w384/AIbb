@@ -627,6 +627,7 @@ async fn saves_key_outside_sqlite_and_never_returns_it() {
             web_mode: WebMode::Auto,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -656,6 +657,7 @@ async fn rejects_a_blank_model_before_persisting_settings() {
             web_mode: WebMode::Auto,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap_err();
@@ -684,6 +686,7 @@ async fn rejects_non_https_or_credential_bearing_api_bases_before_persistence() 
                 web_mode: WebMode::Auto,
                 always_on_top: true,
                 autostart: false,
+                persona: String::new(),
             })
             .await
             .unwrap_err();
@@ -709,6 +712,7 @@ async fn omitted_key_preserves_the_credential_until_explicitly_cleared() {
             web_mode: WebMode::Off,
             always_on_top: false,
             autostart: true,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -739,6 +743,7 @@ async fn blank_replacement_key_preserves_the_existing_protected_credential() {
             web_mode: WebMode::Auto,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -853,6 +858,7 @@ async fn persists_non_secret_settings_across_database_reopen() {
             web_mode: WebMode::Force,
             always_on_top: false,
             autostart: true,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -867,6 +873,7 @@ async fn persists_non_secret_settings_across_database_reopen() {
             web_mode: WebMode::Force,
             always_on_top: false,
             autostart: true,
+            persona: String::new(),
             api_configured: false,
         }
     );
@@ -923,7 +930,8 @@ fn migrations_create_the_required_schema_without_an_api_key_column() {
             "avatar_filename",
             "profile_version",
             "archive_root",
-            "archive_auto_discover"
+            "archive_auto_discover",
+            "persona"
         ]
     );
 
@@ -968,6 +976,7 @@ async fn sanitizes_credential_failures_before_returning_app_error() {
             web_mode: WebMode::Auto,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap_err();
@@ -996,6 +1005,7 @@ async fn restores_previous_non_secret_settings_when_credential_set_fails() {
             web_mode: WebMode::Off,
             always_on_top: false,
             autostart: true,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -1008,6 +1018,7 @@ async fn restores_previous_non_secret_settings_when_credential_set_fails() {
             web_mode: WebMode::Force,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap_err();
@@ -1020,6 +1031,7 @@ async fn restores_previous_non_secret_settings_when_credential_set_fails() {
             web_mode: WebMode::Off,
             always_on_top: false,
             autostart: true,
+            persona: String::new(),
             api_configured: true,
         }
     );
@@ -1047,6 +1059,7 @@ async fn returns_fixed_public_error_when_settings_rollback_fails() {
             web_mode: WebMode::Auto,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -1068,6 +1081,7 @@ async fn returns_fixed_public_error_when_settings_rollback_fails() {
             web_mode: WebMode::Force,
             always_on_top: false,
             autostart: true,
+            persona: String::new(),
         })
         .await
         .unwrap_err();
@@ -1095,6 +1109,7 @@ async fn serializes_concurrent_saves_across_database_and_credential_operations()
             web_mode: WebMode::Auto,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
         })
         .await
         .unwrap();
@@ -1109,6 +1124,7 @@ async fn serializes_concurrent_saves_across_database_and_credential_operations()
                 web_mode: WebMode::Off,
                 always_on_top: false,
                 autostart: true,
+                persona: String::new(),
             })
             .await
     });
@@ -1126,6 +1142,7 @@ async fn serializes_concurrent_saves_across_database_and_credential_operations()
                 web_mode: WebMode::Force,
                 always_on_top: true,
                 autostart: false,
+                persona: String::new(),
             })
             .await
     });
@@ -1158,6 +1175,7 @@ async fn serializes_concurrent_saves_across_database_and_credential_operations()
             web_mode: WebMode::Force,
             always_on_top: true,
             autostart: false,
+            persona: String::new(),
             api_configured: true,
         }
     );

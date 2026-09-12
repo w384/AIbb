@@ -29,6 +29,8 @@ pub struct ApiSettings {
     pub web_mode: WebMode,
     pub always_on_top: bool,
     pub autostart: bool,
+    /// Custom personality (「性格定制」) injected into chat prompts.
+    pub persona: String,
     pub api_configured: bool,
 }
 
@@ -41,6 +43,7 @@ pub struct SaveSettings {
     pub web_mode: WebMode,
     pub always_on_top: bool,
     pub autostart: bool,
+    pub persona: String,
 }
 
 pub struct ExplorationTaskSnapshot {
@@ -118,6 +121,7 @@ impl SettingsService {
             web_mode,
             always_on_top: persisted.always_on_top,
             autostart: persisted.autostart,
+            persona: persisted.persona,
             api_configured,
         })
     }
@@ -230,6 +234,7 @@ impl SettingsService {
                 web_mode,
                 always_on_top: persisted.always_on_top,
                 autostart: persisted.autostart,
+                persona: persisted.persona,
                 api_configured: api_key.as_ref().is_some_and(|key| !key.is_empty()),
             },
             api_key,
@@ -241,6 +246,7 @@ impl SettingsService {
         let api_base = settings.api_base.trim().to_string();
         let model = settings.model.trim().to_string();
         validate_required_settings(&api_base, &model)?;
+        let persona = validate_persona(settings.persona)?;
         let replacement_key = settings.api_key.and_then(normalize_replacement_key);
         let previous = self.database.load_settings()?;
         self.database.save_settings(
@@ -249,6 +255,7 @@ impl SettingsService {
             settings.web_mode.as_storage_value(),
             settings.always_on_top,
             settings.autostart,
+            &persona,
         )?;
 
         if let Some(api_key) = replacement_key {
@@ -261,6 +268,7 @@ impl SettingsService {
                         &previous.web_mode,
                         previous.always_on_top,
                         previous.autostart,
+                        &previous.persona,
                     )
                     .is_err()
                 {
@@ -292,6 +300,7 @@ impl SettingsService {
             web_mode,
             always_on_top: persisted.always_on_top,
             autostart: persisted.autostart,
+            persona: persisted.persona,
             api_configured: false,
         };
         let api_key = self
@@ -321,6 +330,7 @@ impl SettingsService {
             web_mode,
             always_on_top: persisted.always_on_top,
             autostart: persisted.autostart,
+            persona: persisted.persona,
             api_configured: false,
         };
         let api_key = self
@@ -404,6 +414,19 @@ fn validate_required_settings(api_base: &str, model: &str) -> Result<(), AppErro
 fn parse_web_mode(settings: &PersistedSettings) -> Result<WebMode, AppError> {
     WebMode::from_storage_value(&settings.web_mode)
         .ok_or_else(|| AppError::new("invalidSettings", "Application settings are invalid."))
+}
+
+/// Trim and bound the custom personality so a stray paste cannot balloon the
+/// prompt or the settings row.
+fn validate_persona(persona: String) -> Result<String, AppError> {
+    let persona = persona.trim().to_string();
+    if persona.chars().count() > 2_000 {
+        return Err(AppError::new(
+            "invalidSettings",
+            "性格设定不能超过 2000 字，请精简后再保存。",
+        ));
+    }
+    Ok(persona)
 }
 
 fn credential_store_access_error() -> AppError {

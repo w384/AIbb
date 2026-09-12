@@ -140,6 +140,10 @@ CREATE TABLE archive_ledger (
 CREATE INDEX archive_ledger_created_idx ON archive_ledger(created_at);
 "#;
 
+const PERSONA: &str = r#"
+ALTER TABLE app_settings ADD COLUMN persona TEXT NOT NULL DEFAULT '';
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
     Migrations::new(vec![
         M::up(INITIAL_SCHEMA),
@@ -148,6 +152,7 @@ pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Erro
         M::up(OUTING_DIARIES),
         M::up(OUTING_UNIQUENESS),
         M::up(ARCHIVE_FEATURE),
+        M::up(PERSONA),
     ])
     .to_latest(connection)
 }

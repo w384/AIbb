@@ -7,7 +7,7 @@ pub mod source_preference;
 pub use crate::domain::WebMaterial;
 pub use extract::ExtractedPage;
 pub use fetch::{
-    BodyStream, FetchBudget, FetchedPage, HttpConnector, HttpResponse, PageFetcher,
+    BodyStream, FetchBudget, FetchedPage, HttpConnector, HttpResponse, ImagePayload, PageFetcher,
     ReqwestConnector, SafePageFetcher,
 };
 pub use guard::{

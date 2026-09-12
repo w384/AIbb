@@ -7,12 +7,12 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     app_state::AppState,
-    domain::{MemoryContext, Role, SummaryCandidate},
+    domain::{MemoryContext, Role, SummaryCandidate, WebMode},
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     exploration::{parse_outing_command, ExplorationRequest, UserInputIntent},
     llm::{ChatMessage, ChatRequest, DeltaSink, LlmTransport, OpenAiClient},
     memory::{ContextBuilder, MemoryRepository},
-    prompts::{build_chat_prompt, ModelPrompt, SUMMARIZATION_INSTRUCTION},
+    prompts::{build_chat_prompt_with_persona, ModelPrompt, SUMMARIZATION_INSTRUCTION},
     settings::{FixedCredentialStore, SettingsService},
 };
 
@@ -59,11 +59,16 @@ pub trait ChatEventSink: Send + Sync {
 pub struct ChatTaskRuntime {
     llm: Arc<dyn LlmTransport>,
     exact_key: Option<String>,
+    persona: String,
 }
 
 impl ChatTaskRuntime {
-    pub fn new(llm: Arc<dyn LlmTransport>, exact_key: Option<String>) -> Self {
-        Self { llm, exact_key }
+    pub fn new(llm: Arc<dyn LlmTransport>, exact_key: Option<String>, persona: String) -> Self {
+        Self {
+            llm,
+            exact_key,
+            persona,
+        }
     }
 }
 
@@ -75,6 +80,7 @@ pub trait ChatRuntimeFactory: Send + Sync {
 struct StaticChatRuntimeFactory {
     llm: Arc<dyn LlmTransport>,
     exact_key: Option<String>,
+    persona: String,
 }
 
 #[async_trait]
@@ -83,6 +89,7 @@ impl ChatRuntimeFactory for StaticChatRuntimeFactory {
         Ok(ChatTaskRuntime::new(
             self.llm.clone(),
             self.exact_key.clone(),
+            self.persona.clone(),
         ))
     }
 }
@@ -103,7 +110,11 @@ impl ChatService {
     ) -> Self {
         Self::with_runtime_factory(
             memory,
-            Arc::new(StaticChatRuntimeFactory { llm, exact_key }),
+            Arc::new(StaticChatRuntimeFactory {
+                llm,
+                exact_key,
+                persona: String::new(),
+            }),
             events,
         )
     }
@@ -183,7 +194,10 @@ impl ChatService {
     }
 
     async fn execute_inner(&self, prepared: PreparedChat) -> Result<(), AppError> {
-        let request = chat_request(&build_chat_prompt(prepared.context));
+        let request = chat_request(&build_chat_prompt_with_persona(
+            prepared.context,
+            &prepared.runtime.persona,
+        ));
         let sink = SafeChatStream::new(
             prepared.request_id.clone(),
             self.events.clone(),
@@ -543,8 +557,8 @@ impl ChatRuntimeFactory for SettingsChatRuntimeFactory {
         let snapshot = self.settings.exploration_task_snapshot().await?;
         let (settings, api_key) = snapshot.into_parts();
         let exact_key = api_key.clone().filter(|key| !key.is_empty());
-        let llm = OpenAiClient::new(settings, FixedCredentialStore::new(api_key));
-        Ok(ChatTaskRuntime::new(Arc::new(llm), exact_key))
+        let llm = OpenAiClient::new(settings.clone(), FixedCredentialStore::new(api_key));
+        Ok(ChatTaskRuntime::new(Arc::new(llm), exact_key, settings.persona))
     }
 }
 
@@ -634,6 +648,9 @@ pub enum InputDisposition {
     ChatStarted {
         #[serde(rename = "requestId")]
         request_id: String,
+        /// Task of the spontaneous outing started alongside this chat, if any.
+        #[serde(rename = "spontaneousTaskId", skip_serializing_if = "Option::is_none")]
+        spontaneous_task_id: Option<String>,
     },
     ExplorationStarted {
         #[serde(rename = "taskId")]
@@ -662,8 +679,12 @@ pub async fn submit_user_input(
 ) -> Result<InputDisposition, AppError> {
     match parse_outing_command(&message) {
         UserInputIntent::Chat => {
+            let spontaneous_task_id = start_spontaneous_exploration(&state, &message).await;
             start_chat(state, message, request_id.clone()).await?;
-            Ok(InputDisposition::ChatStarted { request_id })
+            Ok(InputDisposition::ChatStarted {
+                request_id,
+                spontaneous_task_id,
+            })
         }
         UserInputIntent::Explore { direction } => {
             let task_id = state
@@ -677,6 +698,54 @@ pub async fn submit_user_input(
             })
         }
     }
+}
+
+/// When the web mode allows it and the message looks like a topic worth
+/// wandering off for, AIbb spontaneously goes out in the background and later
+/// presents its findings (links and pictures) alongside the chat reply.
+/// Failures here are ignored: the chat itself must never break because an
+/// outing could not start. Returns the started task id so the renderer can
+/// attach its events to the timeline.
+async fn start_spontaneous_exploration(
+    state: &tauri::State<'_, AppState>,
+    message: &str,
+) -> Option<String> {
+    let exploration = state.exploration.as_ref()?;
+    let settings = state.settings.load().await.ok()?;
+    let spontaneous = match settings.web_mode {
+        WebMode::Force => true,
+        WebMode::Auto => is_spontaneous_exploration_candidate(message),
+        WebMode::Off => false,
+    };
+    if !spontaneous {
+        return None;
+    }
+    let direction = message.trim().to_string();
+    let task_id = exploration
+        .start(ExplorationRequest {
+            direction: (!direction.is_empty()).then_some(direction),
+        })
+        .await
+        .ok()?;
+    Some(task_id.to_string())
+}
+
+/// A conservative topic heuristic so ordinary chit-chat does not trigger an
+/// outing on every message. Questions and explicit "tell me about X" requests
+/// count; casual greetings do not.
+fn is_spontaneous_exploration_candidate(message: &str) -> bool {
+    let message = message.trim();
+    if message.chars().count() < 2 {
+        return false;
+    }
+    if message.ends_with('?') || message.ends_with('？') {
+        return true;
+    }
+    const TOPIC_MARKERS: &[&str] = &[
+        "什么", "如何", "怎么", "为什么", "为啥", "介绍", "讲讲", "说说", "推荐", "了解",
+        "最近", "新闻", "资讯", "趣事", "好玩", "有趣", "发现", "知道", "看看", "怎么样",
+    ];
+    TOPIC_MARKERS.iter().any(|marker| message.contains(marker))
 }
 
 fn chat_service_error() -> AppError {

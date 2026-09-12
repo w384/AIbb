@@ -130,6 +130,7 @@ function outingDiaryMessage(
     taskId,
     content: result.diary,
     sources: result.sources,
+    images: result.images,
     roundNumber: result.roundNumber,
     elapsedSeconds: result.elapsedSeconds,
   };
@@ -211,6 +212,22 @@ function MessageBody({
           <span>思考了 {message.elapsedSeconds} 秒</span>
         </div>
         <p className="outing-diary-content">{message.content}</p>
+        {message.images.length > 0 && (
+          <div className="outing-images" aria-label="带回的图片">
+            {message.images.map((image) => (
+              <a
+                className="outing-image"
+                href={image.pageUrl}
+                key={image.dataUrl}
+                target="_blank"
+                rel="noreferrer"
+                title={image.title}
+              >
+                <img src={image.dataUrl} alt={image.title} loading="lazy" />
+              </a>
+            ))}
+          </div>
+        )}
         {message.sources.length > 0 && (
           <ul className="outing-sources" aria-label="来源">
             {message.sources.map((source) => (
@@ -365,24 +382,30 @@ export function ChatPanel() {
       if (disposition.kind === "explorationStarted") {
         activeRequest.current = null;
         setActiveRequestId(null);
-        knownOutings.current.add(disposition.taskId);
-        const earlyEvent = earlyOutingEvents.current.get(disposition.taskId);
-        earlyOutingEvents.current.delete(disposition.taskId);
-        setMessages((current) =>
-          replaceOutingMessage(current, disposition.taskId, earlyEvent ?? {
-            id: `outing-${disposition.taskId}`,
-            role: "assistant",
-            kind: "outingStatus",
-            taskId: disposition.taskId,
-            content: "出发，去玩～",
-          }),
-        );
+        attachOuting(disposition.taskId, "出发，去玩～");
+      } else if (disposition.spontaneousTaskId) {
+        attachOuting(disposition.spontaneousTaskId, "偷偷溜出去玩啦～");
       }
     } catch (reason) {
       activeRequest.current = null;
       setActiveRequestId(null);
       setError(publicError(reason));
     }
+  }
+
+  function attachOuting(taskId: string, placeholder: string) {
+    knownOutings.current.add(taskId);
+    const earlyEvent = earlyOutingEvents.current.get(taskId);
+    earlyOutingEvents.current.delete(taskId);
+    setMessages((current) =>
+      replaceOutingMessage(current, taskId, earlyEvent ?? {
+        id: `outing-${taskId}`,
+        role: "assistant",
+        kind: "outingStatus",
+        taskId,
+        content: placeholder,
+      }),
+    );
   }
 
   function submit(event: FormEvent) {

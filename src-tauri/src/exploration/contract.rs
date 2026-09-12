@@ -32,6 +32,7 @@ pub fn parse_exploration_result(raw: &str) -> Result<ExplorationResult, Contract
             .map_err(|items: Vec<String>| ContractViolation::ItemCount(items.len()))?,
         diary: String::new(),
         sources: Vec::new(),
+        images: Vec::new(),
         round_number: 0,
         elapsed_seconds: 0,
         raw_response: raw.to_string(),

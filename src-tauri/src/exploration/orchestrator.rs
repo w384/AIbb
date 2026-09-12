@@ -5,14 +5,15 @@ use std::{
 };
 
 use async_trait::async_trait;
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use serde::{Deserialize, Serialize};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::{
     domain::{
-        ExplorationResult, MemoryContext, OutingSource, SummaryCandidate, WebMaterial, WebMode,
-        WebPageMaterial,
+        ExplorationImage, ExplorationResult, MemoryContext, OutingSource, SummaryCandidate,
+        WebMaterial, WebMode, WebPageMaterial,
     },
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     llm::{ChatMessage, ChatRequest, LlmTransport, NativeWebOutcome, NativeWebRequest},
@@ -35,6 +36,13 @@ use super::{
 pub const EXPLORATION_PROGRESS_EVENT: &str = "exploration://progress";
 pub const EXPLORATION_COMPLETE_EVENT: &str = "exploration://complete";
 pub const EXPLORATION_ERROR_EVENT: &str = "exploration://error";
+
+/// How many hero pictures AIbb may bring back from one outing.
+const MAX_OUTING_IMAGES: usize = 3;
+
+fn image_data_url(mime_type: &str, bytes: &[u8]) -> String {
+    format!("data:{mime_type};base64,{}", BASE64_STANDARD.encode(bytes))
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -390,6 +398,7 @@ pub struct ExplorationTaskRuntime {
     llm: Arc<dyn LlmTransport>,
     web_mode: WebMode,
     credential: ExplorationTaskCredential,
+    persona: String,
 }
 
 impl ExplorationTaskRuntime {
@@ -397,11 +406,13 @@ impl ExplorationTaskRuntime {
         llm: Arc<dyn LlmTransport>,
         web_mode: WebMode,
         credential: ExplorationTaskCredential,
+        persona: String,
     ) -> Self {
         Self {
             llm,
             web_mode,
             credential,
+            persona,
         }
     }
 }
@@ -415,6 +426,7 @@ struct StaticRuntimeFactory {
     llm: Arc<dyn LlmTransport>,
     web_mode: WebMode,
     credential: ExplorationTaskCredential,
+    persona: String,
 }
 
 #[async_trait]
@@ -424,6 +436,7 @@ impl ExplorationRuntimeFactory for StaticRuntimeFactory {
             self.llm.clone(),
             self.web_mode,
             self.credential.clone(),
+            self.persona.clone(),
         ))
     }
 }
@@ -539,6 +552,7 @@ impl ExplorationOrchestrator {
                 llm,
                 web_mode,
                 credential,
+                persona: String::new(),
             }),
             web,
             events,
@@ -735,7 +749,7 @@ impl ExplorationOrchestrator {
         self.progress(task_id, ExplorationStatus::Choosing).await?;
 
         let web_mode = runtime.web_mode;
-        let (raw, web_material) = match web_mode {
+        let (raw, web_material, images) = match web_mode {
             WebMode::Off => {
                 self.public_exploration(task_id, context.clone(), &runtime, cancellation.clone())
                     .await?
@@ -772,7 +786,7 @@ impl ExplorationOrchestrator {
                             return Err(missing_sources_error());
                         }
                         self.progress(task_id, ExplorationStatus::Writing).await?;
-                        (text, WebMaterial { pages })
+                        (text, WebMaterial { pages }, Vec::new())
                     }
                     Ok(NativeWebOutcome::Unsupported) if web_mode == WebMode::Auto => {
                         self.public_exploration(task_id, context, &runtime, cancellation.clone())
@@ -830,6 +844,7 @@ impl ExplorationOrchestrator {
             }
         };
 
+        result.images = images;
         result = sanitize_result(result, &runtime.credential);
         let web_material = sanitize_web_material(web_material, &runtime.credential);
         if web_material.pages.is_empty() {
@@ -841,7 +856,12 @@ impl ExplorationOrchestrator {
         let diary_raw = runtime
             .llm
             .complete(
-                build_outing_diary_request(&result, &web_material, request.direction.as_deref()),
+                build_outing_diary_request(
+                    &result,
+                    &web_material,
+                    request.direction.as_deref(),
+                    &runtime.persona,
+                ),
                 cancellation.clone(),
             )
             .await?;
@@ -874,7 +894,7 @@ impl ExplorationOrchestrator {
         context: MemoryContext,
         task_runtime: &ExplorationTaskRuntime,
         cancellation: CancellationToken,
-    ) -> Result<(String, WebMaterial), AppError> {
+    ) -> Result<(String, WebMaterial, Vec<ExplorationImage>), AppError> {
         self.progress(task_id, ExplorationStatus::PublicSearching)
             .await?;
         let query_raw = task_runtime
@@ -909,15 +929,24 @@ impl ExplorationOrchestrator {
 
         self.progress(task_id, ExplorationStatus::Reading).await?;
         let mut pages = Vec::new();
+        let mut image_candidates: Vec<(String, String, String)> = Vec::new();
         for url in urls.into_iter().take(8) {
             ensure_not_cancelled(&cancellation)?;
             match public_web.fetcher.fetch(&url).await {
                 Ok(page) => {
+                    let image_url = page.image.clone();
                     if let Some(page) = WebPageMaterial::from_untrusted(
                         &page.title,
                         &page.canonical_url,
                         &page.text,
                     ) {
+                        if let Some(image_url) = image_url {
+                            image_candidates.push((
+                                page.source.title.clone(),
+                                page.source.url.clone(),
+                                image_url,
+                            ));
+                        }
                         pages.push(page);
                     }
                 }
@@ -929,6 +958,22 @@ impl ExplorationOrchestrator {
         if pages.is_empty() {
             return Err(missing_sources_error());
         }
+        // Best-effort: bring back at most three hero pictures from the pages,
+        // embedded as data URLs so the renderer never contacts their hosts.
+        let mut images = Vec::new();
+        for (title, page_url, image_url) in image_candidates {
+            if let Ok(Some(payload)) = public_web.fetcher.fetch_image(&image_url).await {
+                images.push(ExplorationImage {
+                    title,
+                    page_url,
+                    data_url: image_data_url(&payload.mime_type, &payload.bytes),
+                });
+                if images.len() == MAX_OUTING_IMAGES {
+                    break;
+                }
+            }
+        }
+
         self.progress(task_id, ExplorationStatus::Writing).await?;
         let web_material = WebMaterial { pages };
         let prompt = build_exploration_prompt(context, web_material.clone());
@@ -936,7 +981,7 @@ impl ExplorationOrchestrator {
             .llm
             .complete(prompt_as_chat_request(&prompt), cancellation)
             .await?;
-        Ok((raw, web_material))
+        Ok((raw, web_material, images))
     }
 
     async fn progress(&self, task_id: Uuid, status: ExplorationStatus) -> Result<(), AppError> {
@@ -1022,6 +1067,14 @@ fn sanitize_result(
         *item = sanitize_sensitive_text(item, exact_key);
     }
     result.diary = sanitize_sensitive_text(&result.diary, exact_key);
+    result.images = result
+        .images
+        .into_iter()
+        .map(|image| ExplorationImage {
+            title: sanitize_sensitive_text(&image.title, exact_key),
+            ..image
+        })
+        .collect();
     result.sources = result
         .sources
         .into_iter()

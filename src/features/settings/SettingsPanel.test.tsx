@@ -92,6 +92,7 @@ describe("SettingsPanel", () => {
       webMode: "auto",
       alwaysOnTop: true,
       autostart: false,
+      persona: "",
       apiConfigured: true,
     });
   });
@@ -276,6 +277,7 @@ describe("SettingsPanel", () => {
       webMode: "auto",
       alwaysOnTop: true,
       autostart: false,
+      persona: "",
       apiConfigured: true,
     });
     render(<SettingsPanel />);
@@ -435,6 +437,7 @@ describe("SettingsPanel", () => {
       webMode: "auto",
       alwaysOnTop: true,
       autostart: false,
+      persona: "",
       apiConfigured: false,
     });
     render(<SettingsPanel />);
@@ -447,6 +450,21 @@ describe("SettingsPanel", () => {
 
     await waitFor(() => expect(screen.getByLabelText("API Key")).toHaveValue(""));
     expect(screen.getByLabelText("API Key")).toHaveAttribute("placeholder", "已安全保存");
+  });
+
+  it("saves a chosen personality preset with the settings", async () => {
+    render(<SettingsPanel />);
+    fireEvent.click(await screen.findByRole("button", { name: "活泼元气" }));
+
+    const personaField = screen.getByLabelText("自定义性格设定") as HTMLTextAreaElement;
+    expect(personaField.value).toContain("元气满满");
+    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
+
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ persona: expect.stringContaining("元气满满") }),
+      ),
+    );
   });
 
   it("requires an in-window confirmation before clearing memory", async () => {

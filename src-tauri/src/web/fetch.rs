@@ -23,10 +23,12 @@ use super::{
 
 const USER_AGENT: &str = "AIbb/0.1 public-read-only";
 const MAX_RESPONSE_BYTES: usize = 2_000_000;
+const MAX_IMAGE_BYTES: usize = 384 * 1024;
 const MAX_REDIRECTS: usize = 3;
 const MAX_PAGES: usize = 8;
 const HTML_ENCODING_SNIFF_BYTES: usize = 1_024;
 const DEFAULT_PAGE_TIMEOUT: Duration = Duration::from_secs(12);
+const DEFAULT_IMAGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub type BodyStream =
     Pin<Box<dyn Stream<Item = Result<Vec<u8>, AppError>> + Send + Sync + 'static>>;
@@ -147,11 +149,28 @@ pub struct FetchedPage {
     pub title: String,
     pub canonical_url: String,
     pub text: String,
+    /// HTTPS URL of a hero image (og:image / twitter:image) when the page
+    /// declares one.
+    pub image: Option<String>,
+}
+
+/// A fetched image to embed as a data URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ImagePayload {
+    pub mime_type: String,
+    pub bytes: Vec<u8>,
 }
 
 #[async_trait]
 pub trait PageFetcher: Send + Sync {
     async fn fetch(&self, url: &str) -> Result<FetchedPage, AppError>;
+
+    /// Best-effort download of a small image (only `image/*` responses).
+    /// The default implementation declines, so fakes and platform variants
+    /// never need to handle images.
+    async fn fetch_image(&self, _url: &str) -> Result<Option<ImagePayload>, AppError> {
+        Ok(None)
+    }
 }
 
 pub struct SafePageFetcher {
@@ -237,6 +256,7 @@ impl SafePageFetcher {
                 title: extracted.title,
                 canonical_url: extracted.canonical_url,
                 text: extracted.text,
+                image: extracted.image,
             });
         }
     }
@@ -254,6 +274,76 @@ impl PageFetcher for SafePageFetcher {
                 result.unwrap_or_else(|_| Err(AppError::from_code(ErrorCode::RequestTimeout)))
             }
         }
+    }
+
+    async fn fetch_image(&self, raw_url: &str) -> Result<Option<ImagePayload>, AppError> {
+        let result = tokio::select! {
+            biased;
+            _ = self.cancellation.cancelled() => {
+                Err(AppError::from_code(ErrorCode::Cancelled))
+            }
+            result = timeout(
+                DEFAULT_IMAGE_TIMEOUT,
+                self.fetch_image_inner(raw_url),
+            ) => {
+                result.unwrap_or_else(|_| Err(AppError::from_code(ErrorCode::RequestTimeout)))
+            }
+        };
+        result
+    }
+}
+
+impl SafePageFetcher {
+    async fn fetch_image_inner(&self, raw_url: &str) -> Result<Option<ImagePayload>, AppError> {
+        let current_url = validate_url(raw_url)?;
+        let target =
+            resolve_public_target(current_url, self.resolver.clone(), &self.cancellation).await?;
+        let mut response = self.connector.get(&target, &self.cancellation).await?;
+        if is_redirect(response.status) {
+            return Ok(None);
+        }
+        if !(200..300).contains(&response.status) {
+            return Ok(None);
+        }
+        let Some(content_type) = response.content_type.take() else {
+            return Ok(None);
+        };
+        let media_type = content_type.split(';').next().unwrap_or_default().trim();
+        if !media_type.eq_ignore_ascii_case("image/jpeg")
+            && !media_type.eq_ignore_ascii_case("image/png")
+            && !media_type.eq_ignore_ascii_case("image/webp")
+            && !media_type.eq_ignore_ascii_case("image/gif")
+        {
+            return Ok(None);
+        }
+        let mut bytes = Vec::new();
+        loop {
+            let chunk = tokio::select! {
+                _ = self.cancellation.cancelled() => {
+                    return Err(AppError::from_code(ErrorCode::Cancelled));
+                }
+                chunk = response.body.next() => chunk,
+            };
+            let Some(chunk) = chunk else {
+                break;
+            };
+            let chunk = chunk?;
+            if bytes
+                .len()
+                .checked_add(chunk.len())
+                .is_none_or(|size| size > MAX_IMAGE_BYTES)
+            {
+                return Ok(None);
+            }
+            bytes.extend_from_slice(&chunk);
+        }
+        if bytes.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(ImagePayload {
+            mime_type: media_type.to_ascii_lowercase(),
+            bytes,
+        }))
     }
 }
 

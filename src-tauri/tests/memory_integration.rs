@@ -181,6 +181,7 @@ async fn clear_memory_is_atomic_and_preserves_application_settings() {
             "force",
             false,
             true,
+            "persisted-persona",
         )
         .unwrap();
     let repository = MemoryRepository::new(database.clone());

@@ -34,6 +34,7 @@ const EMPTY_SETTINGS: ApiSettings = {
   webMode: "auto",
   alwaysOnTop: true,
   autostart: false,
+  persona: "",
   apiConfigured: false,
 };
 
@@ -44,6 +45,33 @@ const EMPTY_PROFILE: AibbProfile = {
 };
 
 const DEEPSEEK_MODEL = "deepseek-v4-flash";
+
+const PERSONA_PRESETS = [
+  {
+    label: "活泼元气",
+    text: "你是元气满满的活泼型 AIbb：爱笑、爱打气，聊天像撒了一路星星糖，经常用俏皮话和感叹句。",
+  },
+  {
+    label: "温柔治愈",
+    text: "你是温柔治愈的 AIbb：说话轻声细语，先共情再给建议，像一杯热牛奶，让人安心。",
+  },
+  {
+    label: "毒舌傲娇",
+    text: "你是毒舌但傲娇的 AIbb：嘴上不饶人，其实很在意，吐槽犀利但从不伤人，偶尔嘴硬心软。",
+  },
+  {
+    label: "话痨热闹",
+    text: "你是话痨型的 AIbb：爱分享、爱追问、话题不断，像阳光一样热闹，但从不打断用户。",
+  },
+  {
+    label: "冷静理性",
+    text: "你是冷静理性的 AIbb：说话简洁、逻辑清晰、就事论事，不夸大也不煽情，偶尔来点冷幽默。",
+  },
+  {
+    label: "神秘高冷",
+    text: "你是神秘高冷的 AIbb：惜字如金、语气疏离又带点神秘，偶尔语出惊人，但始终可靠。",
+  },
+];
 
 function withProviderDefaults(settings: ApiSettings): ApiSettings {
   const base = settings.apiBase.trim().toLowerCase().replace(/\/+$/, "");
@@ -84,6 +112,7 @@ function publicError(reason: unknown): AppErrorPayload {
 
 export function SettingsPanel() {
   const [settings, setSettings] = useState<ApiSettings>(EMPTY_SETTINGS);
+  const [persona, setPersona] = useState("");
   const [profile, setProfile] = useState<AibbProfile>(EMPTY_PROFILE);
   const profileRef = useRef(EMPTY_PROFILE);
   const [profileName, setProfileName] = useState(EMPTY_PROFILE.name);
@@ -111,6 +140,7 @@ export function SettingsPanel() {
       .then((loadedSettings) => {
         if (!disposed) {
           setSettings(withProviderDefaults(loadedSettings));
+          setPersona(loadedSettings.persona ?? "");
           setApiKey("");
           setLoaded(true);
         }
@@ -188,6 +218,7 @@ export function SettingsPanel() {
       webMode: settings.webMode,
       alwaysOnTop: settings.alwaysOnTop,
       autostart: settings.autostart,
+      persona: persona.trim(),
     };
   }
 
@@ -637,6 +668,38 @@ export function SettingsPanel() {
             <span>开机启动</span>
           </label>
         </div>
+
+        <section className="persona-editor" aria-labelledby="persona-heading">
+          <h2 id="persona-heading">性格定制</h2>
+          <p className="settings-hint">
+            给 AIbb 一套人设，聊天和出游日记都会用这种口吻说话。保存后从下一条消息开始生效。
+          </p>
+          <div className="persona-presets" aria-label="性格模板">
+            {PERSONA_PRESETS.map((preset) => (
+              <button
+                key={preset.label}
+                className={`persona-chip${persona.trim() === preset.text ? " selected" : ""}`}
+                type="button"
+                onClick={() => setPersona(preset.text)}
+              >
+                {preset.label}
+              </button>
+            ))}
+          </div>
+          <label className="field">
+            <span>自定义性格设定</span>
+            <textarea
+              aria-label="自定义性格设定"
+              disabled={settingsInFlight}
+              maxLength={2000}
+              rows={4}
+              placeholder="例如：你是一只爱冒险的橘猫，话痨又嘴甜，总想拉我一起去看世界……"
+              value={persona}
+              onChange={(event) => setPersona(event.target.value)}
+            />
+            <small>最多 2000 字；留空使用默认的活泼性格。</small>
+          </label>
+        </section>
 
         {archive && (
           <section className="archive-settings" aria-labelledby="archive-heading">

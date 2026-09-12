@@ -158,9 +158,20 @@ pub struct ExplorationResult {
     pub items: [String; 4],
     pub diary: String,
     pub sources: Vec<OutingSource>,
+    /// Interesting pictures AIbb brought back: the picture itself is embedded
+    /// as a data URL so the renderer never needs to contact the origin host.
+    pub images: Vec<ExplorationImage>,
     pub round_number: u64,
     pub elapsed_seconds: u64,
     pub raw_response: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ExplorationImage {
+    pub title: String,
+    pub page_url: String,
+    pub data_url: String,
 }
 
 impl WebMode {

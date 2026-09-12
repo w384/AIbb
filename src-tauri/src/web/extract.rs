@@ -8,6 +8,7 @@ pub struct ExtractedPage {
     pub title: String,
     pub canonical_url: String,
     pub text: String,
+    pub image: Option<String>,
 }
 
 pub(crate) fn extract_page(final_url: &Url, media_type: &str, source: &str) -> ExtractedPage {
@@ -16,6 +17,7 @@ pub(crate) fn extract_page(final_url: &Url, media_type: &str, source: &str) -> E
             title: String::new(),
             canonical_url: final_url.as_str().to_owned(),
             text: normalize_text(source),
+            image: None,
         };
     }
 
@@ -24,6 +26,9 @@ pub(crate) fn extract_page(final_url: &Url, media_type: &str, source: &str) -> E
     let body_selector = Selector::parse("body").expect("static body selector must be valid");
     let canonical_selector =
         Selector::parse("link[rel][href]").expect("static canonical selector must be valid");
+    let meta_selector = Selector::parse("meta[property]").expect("static meta selector must be valid");
+    let meta_name_selector =
+        Selector::parse("meta[name]").expect("static meta name selector must be valid");
     let title = document
         .select(&title_selector)
         .next()
@@ -43,6 +48,28 @@ pub(crate) fn extract_page(final_url: &Url, media_type: &str, source: &str) -> E
         .and_then(|url| validate_url(url.as_str()).ok())
         .map(|url| url.as_str().to_owned())
         .unwrap_or_else(|| final_url.as_str().to_owned());
+    let image = document
+        .select(&meta_selector)
+        .find(|element| {
+            element
+                .value()
+                .attr("property")
+                .is_some_and(|property| property.eq_ignore_ascii_case("og:image"))
+        })
+        .or_else(|| {
+            document
+                .select(&meta_name_selector)
+                .find(|element| {
+                    element
+                        .value()
+                        .attr("name")
+                        .is_some_and(|name| name.eq_ignore_ascii_case("twitter:image"))
+                })
+        })
+        .and_then(|element| element.value().attr("content"))
+        .and_then(|content| final_url.join(content.trim()).ok())
+        .and_then(|url| validate_url(url.as_str()).ok())
+        .map(|url| url.as_str().to_owned());
     let text = document
         .select(&body_selector)
         .next()
@@ -53,6 +80,7 @@ pub(crate) fn extract_page(final_url: &Url, media_type: &str, source: &str) -> E
         title,
         canonical_url,
         text,
+        image,
     }
 }
 
