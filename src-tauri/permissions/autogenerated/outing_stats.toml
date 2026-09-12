@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-outing-stats"
+description = "Enables the outing_stats command without any pre-configured scope."
+commands.allow = ["outing_stats"]
+
+[[permission]]
+identifier = "deny-outing-stats"
+description = "Denies the outing_stats command without any pre-configured scope."
+commands.deny = ["outing_stats"]

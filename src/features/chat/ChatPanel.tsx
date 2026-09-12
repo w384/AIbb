@@ -15,12 +15,14 @@ import type {
   CompletedOuting,
   ExplorationResult,
   ExplorationStatus,
+  OutingStats,
   OutingTimelineMessage,
 } from "../../contracts";
 import {
   getBootstrapState,
   loadAibbProfile,
   loadChatHistory,
+  loadOutingStats,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
@@ -217,7 +219,13 @@ function newerOutingMessage(
   return incoming;
 }
 
-function ChatHeader({ profile }: { profile: AibbProfile }) {
+function ChatHeader({
+  profile,
+  totalOutings,
+}: {
+  profile: AibbProfile;
+  totalOutings: number | null;
+}) {
   return (
     <header className="chat-header">
       <span className="chat-avatar">
@@ -225,7 +233,17 @@ function ChatHeader({ profile }: { profile: AibbProfile }) {
       </span>
       <div className="chat-identity">
         <h1>{profile.name}</h1>
-        <p><span className="online-dot" aria-hidden="true" />准备出去玩</p>
+        <p>
+          <span className="online-dot" aria-hidden="true" />准备出去玩
+          {totalOutings !== null && totalOutings > 0 && (
+            <span
+              className="outing-trip-badge"
+              title={`AIbb 已经出去玩过 ${totalOutings} 次`}
+            >
+              🐾 ×{totalOutings}
+            </span>
+          )}
+        </p>
       </div>
       <button
         aria-label="打开设置"
@@ -314,6 +332,7 @@ export function ChatPanel() {
   const [streamingReply, setStreamingReply] = useState("");
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [error, setError] = useState<AppErrorPayload | null>(null);
+  const [outingStats, setOutingStats] = useState<OutingStats | null>(null);
   const activeRequest = useRef<string | null>(null);
   const knownOutings = useRef(new Set<string>());
   const earlyOutingEvents = useRef(new Map<string, OutingTimelineMessage>());
@@ -350,6 +369,14 @@ export function ChatPanel() {
         })
         .catch(() => {});
     };
+    const refreshOutingStats = () => {
+      void loadOutingStats()
+        .then((stats) => {
+          if (!disposed) setOutingStats(stats);
+        })
+        .catch(() => {});
+    };
+    refreshOutingStats();
     installListener(
       listenChatWindowFocus((focused) => {
         if (!focused || disposed) return;
@@ -407,6 +434,7 @@ export function ChatPanel() {
         event.taskId,
         outingDiaryMessage(event.taskId, event.result),
       );
+      refreshOutingStats();
     }));
     installListener(listenExplorationError((event) => {
       receiveOutingEvent(event.taskId, {
@@ -523,7 +551,7 @@ export function ChatPanel() {
   if (bootstrap && !bootstrap.apiConfigured) {
     return (
       <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
-        <ChatHeader profile={profile} />
+        <ChatHeader profile={profile} totalOutings={outingStats?.totalOutings ?? null} />
         <section className="first-run-card">
           <span className="first-run-sparkle" aria-hidden="true">✦</span>
           <h2>你好呀！</h2>
@@ -556,7 +584,7 @@ export function ChatPanel() {
 
   return (
     <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
-      <ChatHeader profile={profile} />
+      <ChatHeader profile={profile} totalOutings={outingStats?.totalOutings ?? null} />
       <section
         className="conversation"
         aria-live="polite"
@@ -576,6 +604,30 @@ export function ChatPanel() {
             <MessageBody message={message} profile={profile} />
           </article>
         ))}
+        {outingStats && outingStats.totalOutings > 0 && (
+          <section className="outing-footprint" aria-label="出游足迹">
+            <h3>🐾 出游足迹</h3>
+            <p className="footprint-summary">
+              已经和 {profile.name} 一起出去玩{" "}
+              <strong>{outingStats.totalOutings}</strong> 次，探索过{" "}
+              <strong>{outingStats.totalDirections}</strong> 个方向
+            </p>
+            {outingStats.directions.length > 0 && (
+              <ul className="footprint-directions">
+                {outingStats.directions.map((entry) => (
+                  <li key={entry.direction} className="footprint-direction">
+                    <span className="footprint-direction-name">
+                      {entry.direction}
+                    </span>
+                    <span className="footprint-direction-count">
+                      ×{entry.count}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
         {activeRequestId && (
           <article className="message-row assistant">
             <AssistantIdentity profile={profile} />

@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        CompletedOuting, ExplorationImage, ExplorationResult, MemoryContext, OutingSource,
-        SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
+        CompletedOuting, DirectionCount, ExplorationImage, ExplorationResult, MemoryContext,
+        OutingSource, OutingStats, SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
     },
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     llm::{ChatMessage, ChatRequest, LlmTransport, NativeWebOutcome, NativeWebRequest},
@@ -319,6 +319,7 @@ pub trait ExplorationStore: Send + Sync {
         &self,
         limit: usize,
     ) -> Result<Vec<CompletedOuting>, AppError>;
+    async fn outing_stats(&self) -> Result<OutingStats, AppError>;
 }
 
 #[async_trait]
@@ -673,6 +674,12 @@ impl ExplorationOrchestrator {
         limit: usize,
     ) -> Result<Vec<CompletedOuting>, AppError> {
         self.store.load_completed_outings(limit).await
+    }
+
+    /// Collection-style outing statistics: total trips and per-direction
+    /// counts, the future basis of a play-heat map.
+    pub async fn outing_stats(&self) -> Result<OutingStats, AppError> {
+        self.store.outing_stats().await
     }
 
     async fn prepare(

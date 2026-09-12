@@ -17,6 +17,7 @@ import type {
   ExplorationErrorEvent,
   ExplorationProgressEvent,
   InputDisposition,
+  OutingStats,
   SaveArchiveSettings,
   SaveSettings,
 } from "../contracts";
@@ -66,6 +67,10 @@ export function loadAibbProfile(): Promise<AibbProfile> {
 
 export function loadChatHistory(): Promise<ChatHistory> {
   return invoke("load_chat_history");
+}
+
+export function loadOutingStats(): Promise<OutingStats> {
+  return invoke("outing_stats");
 }
 
 export function saveAibbName(name: string): Promise<AibbProfile> {

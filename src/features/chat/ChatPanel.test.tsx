@@ -14,6 +14,7 @@ import {
   getBootstrapState,
   loadAibbProfile,
   loadChatHistory,
+  loadOutingStats,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
@@ -48,6 +49,7 @@ vi.mock("../../lib/tauri", () => ({
   getBootstrapState: vi.fn(),
   loadAibbProfile: vi.fn(),
   loadChatHistory: vi.fn(),
+  loadOutingStats: vi.fn(),
   openSettingsWindow: vi.fn(),
   submitUserInput: vi.fn(),
   takePendingArchivePaths: vi.fn(async () => []),
@@ -124,6 +126,12 @@ describe("ChatPanel", () => {
     vi.mocked(loadChatHistory).mockResolvedValue({
       messages: [],
       outings: [],
+    });
+    vi.mocked(loadOutingStats).mockResolvedValue({
+      totalOutings: 0,
+      totalDirections: 0,
+      lastOutingAt: null,
+      directions: [],
     });
     mockBootstrap.mockResolvedValue({
       firstRun: false,
@@ -338,6 +346,47 @@ describe("ChatPanel", () => {
     act(() => {
       chatWindowFocusListener(false);
     });
+  });
+
+  it("shows the outing trip badge and the footprint collection", async () => {
+    vi.mocked(loadOutingStats).mockResolvedValue({
+      totalOutings: 4,
+      totalDirections: 3,
+      lastOutingAt: 123456,
+      directions: [
+        { direction: "去看海", count: 2 },
+        { direction: "去宇宙的角落", count: 1 },
+        { direction: "吃遍小吃街", count: 1 },
+      ],
+    });
+    render(<ChatPanel />);
+    await screen.findByRole("textbox", { name: "消息" });
+
+    expect(screen.getByText("🐾 ×4")).toBeVisible();
+    const footprint = screen.getByLabelText("出游足迹");
+    expect(within(footprint).getByText(/已经和 AIbb 一起出去玩/)).toBeVisible();
+    expect(within(footprint).getByText("去看海")).toBeVisible();
+    expect(within(footprint).getByText("×2")).toBeVisible();
+    expect(within(footprint).getByText("去宇宙的角落")).toBeVisible();
+  });
+
+  it("refreshes outing stats when an outing finishes", async () => {
+    mockSubmit.mockImplementation(async (_message) => ({
+      kind: "explorationStarted",
+      taskId: "task-1",
+    }));
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "去看海" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+    await waitFor(() => expect(mockSubmit).toHaveBeenCalledTimes(1));
+
+    const callsBefore = vi.mocked(loadOutingStats).mock.calls.length;
+    act(() => explorationCompleteListener({ taskId: "task-1", result: diaryResult }));
+
+    await waitFor(() =>
+      expect(vi.mocked(loadOutingStats).mock.calls.length).toBe(callsBefore + 1),
+    );
   });
 
   it("presents the pictures AIbb brought back as clickable cards", async () => {

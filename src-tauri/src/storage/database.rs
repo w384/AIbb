@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     archive::models::ArchiveLedgerEntry,
-    domain::{CompletedOuting, ExplorationImage, OutingSource},
+    domain::{CompletedOuting, DirectionCount, ExplorationImage, OutingSource, OutingStats},
     error::{AppError, ErrorCode},
     exploration::{CancelOutcome, ExplorationRecord, ExplorationStatus, ExplorationStore},
 };
@@ -534,6 +534,56 @@ impl ExplorationStore for Database {
             .map_err(|_| exploration_storage_error())?;
         rows.collect::<Result<Vec<_>, _>>()
             .map_err(|_| exploration_storage_error())
+    }
+
+    async fn outing_stats(&self) -> Result<OutingStats, AppError> {
+        let connection = self.connection()?;
+        let total_outings = connection
+            .query_row(
+                "SELECT COUNT(*) FROM explorations WHERE status = 'completed'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| exploration_storage_error())?;
+        let total_directions = connection
+            .query_row(
+                "SELECT COUNT(DISTINCT COALESCE(NULLIF(TRIM(user_direction), ''), '随心漫游')) \
+                 FROM explorations WHERE status = 'completed'",
+                [],
+                |row| row.get::<_, i64>(0),
+            )
+            .map_err(|_| exploration_storage_error())?;
+        let last_outing_at = connection
+            .query_row(
+                "SELECT MAX(created_at) FROM explorations WHERE status = 'completed'",
+                [],
+                |row| row.get::<_, Option<i64>>(0),
+            )
+            .map_err(|_| exploration_storage_error())?;
+        let mut statement = connection
+            .prepare(
+                "SELECT COALESCE(NULLIF(TRIM(user_direction), ''), '随心漫游'), COUNT(*) \
+                 FROM explorations WHERE status = 'completed' \
+                 GROUP BY 1 ORDER BY COUNT(*) DESC, 1 ASC",
+            )
+            .map_err(|_| exploration_storage_error())?;
+        let directions = statement
+            .query_map([], |row| {
+                Ok(DirectionCount {
+                    direction: row.get::<_, String>(0)?,
+                    count: u64::try_from(row.get::<_, i64>(1)?).unwrap_or_default(),
+                })
+            })
+            .map_err(|_| exploration_storage_error())?
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|_| exploration_storage_error())?;
+        Ok(OutingStats {
+            total_outings: u64::try_from(total_outings).map_err(|_| exploration_storage_error())?,
+            total_directions: u64::try_from(total_directions)
+                .map_err(|_| exploration_storage_error())?,
+            last_outing_at,
+            directions,
+        })
     }
 }
 

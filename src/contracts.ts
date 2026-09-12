@@ -121,6 +121,20 @@ export interface ChatHistory {
   outings: CompletedOuting[];
 }
 
+/** How many finished outings went to one direction. */
+export interface DirectionCount {
+  direction: string;
+  count: number;
+}
+
+/** Collection-style outing statistics (the future heat-map basis). */
+export interface OutingStats {
+  totalOutings: number;
+  totalDirections: number;
+  lastOutingAt: number | null;
+  directions: DirectionCount[];
+}
+
 export type OutingTimelineMessage =
   | {
       id: string;

@@ -187,6 +187,27 @@ pub struct CompletedOuting {
     pub created_at: i64,
 }
 
+/// How many finished outings went to one direction. The raw user wording is
+/// kept so a future heat map can group by place.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DirectionCount {
+    pub direction: String,
+    pub count: u64,
+}
+
+/// Collection-style outing statistics shown in the chat window: total trips,
+/// distinct directions and the per-direction counts that will later feed a
+/// play-heat map.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct OutingStats {
+    pub total_outings: u64,
+    pub total_directions: u64,
+    pub last_outing_at: Option<i64>,
+    pub directions: Vec<DirectionCount>,
+}
+
 impl WebMode {
     pub fn as_storage_value(self) -> &'static str {
         match self {

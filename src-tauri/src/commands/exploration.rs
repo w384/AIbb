@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use tauri::Emitter;
 
 use crate::{
+    app_state::AppState,
+    domain::OutingStats,
     error::AppError,
     exploration::{
         DefaultPublicWebFactory, ExplorationEvent, ExplorationEventSink, ExplorationOrchestrator,
@@ -13,6 +15,24 @@ use crate::{
     settings::SettingsService,
     storage::Database,
 };
+
+/// Collection-style outing statistics for the chat window: how many trips
+/// AIbb has taken and which directions it visited most. The per-direction
+/// counts will later feed a play-heat map.
+#[tauri::command]
+pub async fn outing_stats(
+    state: tauri::State<'_, AppState>,
+) -> Result<OutingStats, AppError> {
+    match state.exploration.as_ref() {
+        Some(exploration) => exploration.outing_stats().await,
+        None => Ok(OutingStats {
+            total_outings: 0,
+            total_directions: 0,
+            last_outing_at: None,
+            directions: Vec::new(),
+        }),
+    }
+}
 
 pub(crate) fn build_exploration_orchestrator(
     app: tauri::AppHandle,

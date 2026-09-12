@@ -19,6 +19,7 @@ use commands::archive::{
     open_archive_window, save_archive_settings, take_pending_archive_paths,
 };
 use commands::chat::{build_chat_service, load_chat_history, submit_user_input};
+use commands::exploration::outing_stats;
 use commands::exploration::build_exploration_orchestrator;
 use commands::memory::clear_memory;
 use commands::profile::{load_aibb_profile, reset_aibb_avatar, save_aibb_avatar, save_aibb_name};
@@ -124,6 +125,7 @@ pub fn run() {
             save_aibb_avatar,
             reset_aibb_avatar,
             load_chat_history,
+            outing_stats,
             clear_memory,
             submit_user_input,
             archive_files,
@@ -243,6 +245,7 @@ mod tests {
                 "allow-get-bootstrap-state",
                 "allow-load-aibb-profile",
                 "allow-load-chat-history",
+                "allow-outing-stats",
                 "allow-open-settings-window",
                 "allow-submit-user-input",
                 "allow-archive-files",

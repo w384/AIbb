@@ -9,6 +9,7 @@
     "allow-get-bootstrap-state",
     "allow-load-aibb-profile",
     "allow-load-chat-history",
+    "allow-outing-stats",
     "allow-open-settings-window",
     "allow-submit-user-input",
     "allow-archive-files",

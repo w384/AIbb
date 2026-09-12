@@ -2008,6 +2008,81 @@ async fn completed_outings_survive_restart_with_sources_and_pictures() {
 }
 
 #[tokio::test]
+async fn outing_stats_count_trips_and_group_by_direction() {
+    let temp = tempfile::tempdir().unwrap();
+    let database = Database::open(temp.path().join("aibb.sqlite3")).unwrap();
+
+    async fn finish(database: &Database, direction: &str, round: u64) {
+        let task_id = Uuid::new_v4();
+        database.create_queued(task_id, Some(direction)).await.unwrap();
+        for status in [
+            ExplorationStatus::Choosing,
+            ExplorationStatus::PublicSearching,
+            ExplorationStatus::Reading,
+            ExplorationStatus::Writing,
+        ] {
+            database.transition(task_id, status).await.unwrap();
+        }
+        let result = ExplorationResult {
+            items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
+            diary: "出去玩啦".into(),
+            sources: Vec::new(),
+            images: Vec::new(),
+            round_number: round,
+            elapsed_seconds: 9,
+            raw_response: VALID_RESULT.into(),
+        };
+        database.complete(task_id, &result, &result.raw_response).await.unwrap();
+    }
+
+    finish(&database, "去看海", 1).await;
+    finish(&database, "去看海", 2).await;
+    finish(&database, "去宇宙的角落", 3).await;
+
+    // 一个未完成的出游不计入统计
+    let pending = Uuid::new_v4();
+    database.create_queued(pending, Some("去爬山")).await.unwrap();
+    database.cancel(pending).await.unwrap();
+
+    // 没有指定方向的出游归入「随心漫游」
+    let roam = Uuid::new_v4();
+    database.create_queued(roam, None).await.unwrap();
+    for status in [
+        ExplorationStatus::Choosing,
+        ExplorationStatus::PublicSearching,
+        ExplorationStatus::Reading,
+        ExplorationStatus::Writing,
+    ] {
+        database.transition(roam, status).await.unwrap();
+    }
+    let roam_result = ExplorationResult {
+        items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
+        diary: "随心逛了一圈".into(),
+        sources: Vec::new(),
+        images: Vec::new(),
+        round_number: 4,
+        elapsed_seconds: 11,
+        raw_response: VALID_RESULT.into(),
+    };
+    database
+        .complete(roam, &roam_result, &roam_result.raw_response)
+        .await
+        .unwrap();
+
+    let stats = database.outing_stats().await.unwrap();
+    assert_eq!(stats.total_outings, 4);
+    assert_eq!(stats.total_directions, 3);
+    assert!(stats.last_outing_at.is_some());
+    assert_eq!(stats.directions.len(), 3);
+    assert_eq!(stats.directions[0].direction, "去看海");
+    assert_eq!(stats.directions[0].count, 2);
+    assert_eq!(stats.directions[1].direction, "去宇宙的角落");
+    assert_eq!(stats.directions[1].count, 1);
+    assert_eq!(stats.directions[2].direction, "随心漫游");
+    assert_eq!(stats.directions[2].count, 1);
+}
+
+#[tokio::test]
 async fn recovery_atomically_interrupts_only_nonterminal_rows_and_is_idempotent() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("aibb.sqlite3");
