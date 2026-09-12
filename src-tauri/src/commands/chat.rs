@@ -173,6 +173,13 @@ impl ChatService {
         Ok(())
     }
 
+    /// Asks the model whether this message is an outing request and, if so,
+    /// with which direction. `None` means "could not judge — treat as chat".
+    pub async fn classify_outing_intent(&self, message: &str) -> Option<UserInputIntent> {
+        let runtime = self.runtime_factory.create().await.ok()?;
+        crate::commands::intent::classify_user_intent(runtime.llm.as_ref(), message).await
+    }
+
     pub async fn run(&self, message: String, request_id: String) -> Result<(), AppError> {
         let prepared = self.prepare(message, request_id).await?;
         self.execute(prepared).await
@@ -711,7 +718,17 @@ pub async fn submit_user_input(
     request_id: String,
 ) -> Result<InputDisposition, AppError> {
     match parse_outing_command(&message) {
+        UserInputIntent::Explore { direction } => {
+            start_exploration(&state, direction).await
+        }
         UserInputIntent::Chat => {
+            // 关键词路由未命中：先让大模型判断用户到底想做什么，
+            // 判断为出游（无论有没有方向）就自主出发，而不是反问用户。
+            if let Some(UserInputIntent::Explore { direction }) =
+                classify_llm_intent(&state, &message).await
+            {
+                return start_exploration(&state, direction).await;
+            }
             let spontaneous_task_id = start_spontaneous_exploration(&state, &message).await;
             start_chat(state, message, request_id.clone()).await?;
             Ok(InputDisposition::ChatStarted {
@@ -719,18 +736,30 @@ pub async fn submit_user_input(
                 spontaneous_task_id,
             })
         }
-        UserInputIntent::Explore { direction } => {
-            let task_id = state
-                .exploration
-                .as_ref()
-                .ok_or_else(exploration_service_error)?
-                .start(ExplorationRequest { direction })
-                .await?;
-            Ok(InputDisposition::ExplorationStarted {
-                task_id: task_id.to_string(),
-            })
-        }
     }
+}
+
+async fn classify_llm_intent(
+    state: &tauri::State<'_, AppState>,
+    message: &str,
+) -> Option<UserInputIntent> {
+    let chat = state.chat.as_ref()?;
+    chat.classify_outing_intent(message).await
+}
+
+async fn start_exploration(
+    state: &tauri::State<'_, AppState>,
+    direction: Option<String>,
+) -> Result<InputDisposition, AppError> {
+    let task_id = state
+        .exploration
+        .as_ref()
+        .ok_or_else(exploration_service_error)?
+        .start(ExplorationRequest { direction })
+        .await?;
+    Ok(InputDisposition::ExplorationStarted {
+        task_id: task_id.to_string(),
+    })
 }
 
 /// When the web mode allows it and the message looks like a topic worth

@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        CompletedOuting, DirectionCount, ExplorationImage, ExplorationResult, MemoryContext,
-        OutingSource, OutingStats, SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
+        CompletedOuting, ExplorationImage, ExplorationResult, MemoryContext, OutingSource,
+        OutingStats, SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
     },
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     llm::{ChatMessage, ChatRequest, LlmTransport, NativeWebOutcome, NativeWebRequest},
