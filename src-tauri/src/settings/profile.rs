@@ -308,6 +308,20 @@ pub(crate) fn avatar_data_url(bytes: &[u8]) -> String {
     format!("data:image/webp;base64,{}", BASE64_STANDARD.encode(bytes))
 }
 
+/// Read the normalized avatar file when present and decodable, used to derive
+/// tray and shortcut icons. Returns `Ok(None)` when no avatar is stored.
+pub(crate) fn read_avatar_bytes(
+    profile_directory: &Path,
+) -> Result<Option<Vec<u8>>, AppError> {
+    let path = profile_directory.join(AVATAR_FILENAME);
+    if !path.exists() {
+        return Ok(None);
+    }
+    let bytes = fs::read(&path).map_err(avatar_storage_error_with)?;
+    decode_avatar(&bytes, ImageFormat::WebP).map_err(|_| invalid_avatar_error())?;
+    Ok(Some(bytes))
+}
+
 fn decode_avatar(
     bytes: &[u8],
     format: ImageFormat,

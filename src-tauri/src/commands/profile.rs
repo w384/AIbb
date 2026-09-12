@@ -2,7 +2,7 @@ use tauri::{AppHandle, Emitter, Manager, Runtime};
 
 use crate::{
     app_state::AppState, domain::AibbProfile, error::AppError,
-    platform::window_controller::profile_window_title,
+    platform::avatar_icons, platform::window_controller::profile_window_title,
 };
 
 pub const PROFILE_UPDATED_EVENT: &str = "profile://updated";
@@ -38,6 +38,7 @@ pub async fn save_aibb_avatar(
 ) -> Result<AibbProfile, AppError> {
     let profile = state.settings.save_aibb_avatar(bytes, mime_type).await?;
     publish_profile_updated(&app, &profile);
+    refresh_avatar_icons(&app, &state).await;
     Ok(profile)
 }
 
@@ -48,7 +49,23 @@ pub async fn reset_aibb_avatar(
 ) -> Result<AibbProfile, AppError> {
     let profile = state.settings.reset_aibb_avatar().await?;
     publish_profile_updated(&app, &profile);
+    if let Ok(directory) = app.path().app_data_dir() {
+        avatar_icons::apply_avatar_icons(&app, &directory, None);
+    }
     Ok(profile)
+}
+
+/// Best-effort: re-read the stored avatar and push it into the tray icon and
+/// the desktop shortcut. Failures here must never fail the avatar save.
+async fn refresh_avatar_icons<R: Runtime>(
+    app: &AppHandle<R>,
+    state: &tauri::State<'_, AppState>,
+) {
+    let Ok(directory) = app.path().app_data_dir() else {
+        return;
+    };
+    let bytes = state.settings.load_avatar_bytes().await.ok().flatten();
+    avatar_icons::apply_avatar_icons(app, &directory, bytes.as_deref());
 }
 
 pub(crate) fn publish_profile_updated<R: Runtime>(app: &AppHandle<R>, profile: &AibbProfile) {

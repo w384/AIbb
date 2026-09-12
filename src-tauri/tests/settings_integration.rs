@@ -275,6 +275,28 @@ async fn profile_png_and_jpeg_inputs_are_returned_as_decodable_webp() {
 }
 
 #[tokio::test]
+async fn profile_load_avatar_bytes_follows_save_and_reset() {
+    let db = TestDatabase::new();
+    let service = SettingsService::new_with_app_data_dir(
+        db.handle(),
+        FakeCredentialStore::default(),
+        db.app_data_dir(),
+    );
+
+    assert_eq!(service.load_avatar_bytes().await.unwrap(), None);
+
+    let profile = service
+        .save_aibb_avatar(encoded_test_image(ImageFormat::Png), "image/png".into())
+        .await
+        .unwrap();
+    let bytes = service.load_avatar_bytes().await.unwrap().unwrap();
+    assert_eq!(bytes, avatar_webp_bytes(&profile));
+
+    service.reset_aibb_avatar().await.unwrap();
+    assert_eq!(service.load_avatar_bytes().await.unwrap(), None);
+}
+
+#[tokio::test]
 async fn profile_avatar_database_failure_restores_the_previous_file_and_profile() {
     let db = TestDatabase::new();
     let service = SettingsService::new_with_app_data_dir(

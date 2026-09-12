@@ -13,8 +13,8 @@ use crate::{
 
 use super::{
     profile::{
-        avatar_data_url, load_or_recover_avatar_data_url, normalize_avatar, validate_aibb_name,
-        AvatarFileTransaction,
+        avatar_data_url, load_or_recover_avatar_data_url, normalize_avatar, read_avatar_bytes,
+        validate_aibb_name, AvatarFileTransaction,
     },
     CredentialStore, FixedCredentialStore,
 };
@@ -202,6 +202,13 @@ impl SettingsService {
             avatar_data_url: None,
             version,
         })
+    }
+
+    /// The stored normalized avatar bytes (`None` when no avatar is set), for
+    /// deriving tray and desktop-shortcut icons.
+    pub async fn load_avatar_bytes(&self) -> Result<Option<Vec<u8>>, AppError> {
+        let _operation = self.operation.lock().await;
+        read_avatar_bytes(self.profile_directory()?)
     }
 
     pub async fn exploration_task_snapshot(&self) -> Result<ExplorationTaskSnapshot, AppError> {

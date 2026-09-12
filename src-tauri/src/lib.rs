@@ -92,6 +92,18 @@ pub fn run() {
             platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
             #[cfg(desktop)]
             platform::tray::install_tray(app.handle(), &profile.name)?;
+            #[cfg(desktop)]
+            {
+                let avatar = tauri::async_runtime::block_on(settings.load_avatar_bytes())
+                    .ok()
+                    .flatten();
+                let directory = app.path().app_data_dir()?;
+                platform::avatar_icons::apply_avatar_icons(
+                    app.handle(),
+                    &directory,
+                    avatar.as_deref(),
+                );
+            }
             commands::profile::publish_profile_updated(app.handle(), &profile);
             Ok(())
         })
