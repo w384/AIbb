@@ -24,7 +24,30 @@ pub async fn classify_user_intent(
         ],
     };
     let raw = llm.complete(request, CancellationToken::new()).await.ok()?;
-    parse_intent_classification(&raw).ok()
+    let parsed = parse_intent_classification(&raw).ok();
+    match parsed {
+        // The model is the authority, except for one safety net: an explicit
+        // departure command (出发 / 出门逛…) must never be answered with a
+        // chat message, whatever the model judged.
+        Some(UserInputIntent::Explore { .. }) => parsed,
+        _ if is_explicit_departure_command(message) => {
+            Some(UserInputIntent::Explore { direction: None })
+        }
+        _ => parsed,
+    }
+}
+
+const DEPARTURE_PHRASES: &[&str] = &["出发", "出去逛逛", "出去溜达", "出门逛"];
+const QUESTION_HINTS: &[&str] = &["吗", "呢", "？", "?", "哪", "什么", "怎么", "是否", "要不", "要不要", "想不想"];
+
+fn is_explicit_departure_command(message: &str) -> bool {
+    let trimmed = message.trim();
+    if QUESTION_HINTS.iter().any(|hint| trimmed.contains(hint)) {
+        return false;
+    }
+    DEPARTURE_PHRASES
+        .iter()
+        .any(|phrase| trimmed.contains(phrase))
 }
 
 fn parse_intent_classification(raw: &str) -> Result<UserInputIntent, AppError> {
@@ -139,5 +162,32 @@ mod tests {
         let intent =
             parse_intent_classification(r#"{"intent":"explore","direction":"   "}"#).unwrap();
         assert_eq!(intent, UserInputIntent::Explore { direction: None });
+    }
+
+    #[test]
+    fn explicit_departure_commands_override_a_chat_judgement() {
+        for message in ["出发出发", "出发", "出发吧", "我们出发啊", "出去逛逛"] {
+            assert!(
+                is_explicit_departure_command(message),
+                "{message} must be treated as a departure command"
+            );
+        }
+    }
+
+    #[test]
+    fn questions_and_first_person_plans_are_not_departure_commands() {
+        for message in [
+            "你出发了吗",
+            "什么时候出发",
+            "要不要出发",
+            "昨天我出去逛了",
+            "我想出去玩",
+            "今天天气不错",
+        ] {
+            assert!(
+                !is_explicit_departure_command(message),
+                "{message} must not be treated as a departure command"
+            );
+        }
     }
 }

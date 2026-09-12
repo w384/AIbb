@@ -253,6 +253,12 @@ describe("ChatPanel", () => {
     expect(outingArticle).not.toBeNull();
     expect(within(outingArticle!).getByRole("img", { name: "小团子" })).toBeVisible();
 
+    // 每个阶段都有微动画：跳动的足迹 + 三连等待点，表示动作在进行。
+    expect(departure.closest(".outing-status")!.querySelector(".outing-status-paw")).not.toBeNull();
+    expect(
+      departure.closest(".outing-status")!.querySelectorAll(".outing-status-dots i"),
+    ).toHaveLength(3);
+
     act(() => {
       explorationProgressListener({ taskId: "other", status: "writing" });
     });
@@ -260,7 +266,12 @@ describe("ChatPanel", () => {
     act(() => {
       explorationProgressListener({ taskId: "task-1", status: "reading" });
     });
-    expect(screen.getByText("小团子 正在阅读～")).toBeVisible();
+    const reading = screen.getByText("小团子 正在阅读～");
+    expect(reading).toBeVisible();
+    expect(reading.closest(".outing-status")!.querySelector(".outing-status-paw")).not.toBeNull();
+    expect(
+      reading.closest(".outing-status")!.querySelectorAll(".outing-status-dots i"),
+    ).toHaveLength(3);
 
     act(() => {
       explorationCompleteListener({ taskId: "other", result: diaryResult });

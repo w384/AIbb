@@ -53,6 +53,11 @@ pub fn build_contract_correction(raw: &str, violation: ContractViolation) -> Str
 struct ExplorationEnvelope {
     #[serde(default)]
     items: Vec<String>,
+    /// The model sometimes expresses the shared thread of the four findings
+    /// as an extra `theme` field. It carries no routing meaning — accept and
+    /// ignore it so a stylistic flourish does not fail the whole outing.
+    #[serde(default)]
+    theme: Option<String>,
 }
 
 fn extract_json_payload(raw: &str) -> Option<&str> {
@@ -98,7 +103,13 @@ mod tests {
     }
 
     #[test]
-    fn first_stage_rejects_an_automatic_next_request_field() {
+    fn accepts_an_optional_theme_field_but_rejects_an_automatic_next_request_field() {
+        let with_theme = parse_exploration_result(
+            r#"{"items":["甲","乙","丙","丁"],"theme":"所有榜单都在假装描述世界"}"#,
+        )
+        .unwrap();
+        assert_eq!(with_theme.items, ["甲", "乙", "丙", "丁"]);
+
         let raw = r#"{"items":["甲","乙","丙","丁"],"next_outing_request":"自动再出去玩"}"#;
 
         assert_eq!(

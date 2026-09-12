@@ -316,7 +316,17 @@ function MessageBody({
     );
   }
   if (message.kind === "outingStatus") {
-    return <p className="message outing-status">{profile.name} {message.content}</p>;
+    return (
+      <p className="message outing-status">
+        <span className="outing-status-paw" aria-hidden="true">🐾</span>
+        <span className="outing-status-text">
+          {profile.name} {message.content}
+        </span>
+        <span className="outing-status-dots" aria-hidden="true">
+          <i /><i /><i />
+        </span>
+      </p>
+    );
   }
   if (message.kind === "outingError") {
     return <p className="message outing-error" role="alert">{message.content}</p>;
