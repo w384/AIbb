@@ -9,11 +9,15 @@
     "allow-load-settings",
     "allow-save-settings",
     "allow-test-connection",
+    "allow-list-available-models",
     "allow-clear-memory",
     "allow-exit-app",
     "allow-load-aibb-profile",
     "allow-save-aibb-name",
     "allow-save-aibb-avatar",
-    "allow-reset-aibb-avatar"
+    "allow-reset-aibb-avatar",
+    "allow-load-archive-settings",
+    "allow-save-archive-settings",
+    "allow-discover-archive-structure"
   ]
 }

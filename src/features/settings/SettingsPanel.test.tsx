@@ -4,6 +4,7 @@ import { SettingsPanel } from "./SettingsPanel";
 import {
   clearMemory,
   exitApp,
+  listAvailableModels,
   loadAibbProfile,
   listenProfileUpdated,
   loadSettings,
@@ -27,11 +28,27 @@ vi.mock("../../lib/tauri", () => ({
     return unlistenProfile;
   }),
   loadSettings: vi.fn(),
+  loadArchiveSettings: vi.fn(async () => ({
+    root: "",
+    autoDiscover: true,
+    templateName: "默认",
+    templates: [
+      {
+        name: "默认",
+        categories: [{ name: "其他", keywords: [] }],
+        hierarchy: ["week", "category"],
+        includeSource: true,
+      },
+    ],
+  })),
+  saveArchiveSettings: vi.fn(async () => undefined),
+  discoverArchiveStructure: vi.fn(async () => null),
   resetAibbAvatar: vi.fn(),
   saveAibbAvatar: vi.fn(),
   saveAibbName: vi.fn(),
   saveSettings: vi.fn(),
   testConnection: vi.fn(),
+  listAvailableModels: vi.fn(),
 }));
 
 vi.mock("../profile/avatarImage", () => ({
@@ -345,6 +362,44 @@ describe("SettingsPanel", () => {
 
     expect(await screen.findByRole("alert")).toHaveTextContent("系统凭据服务");
     expect(testConnection).not.toHaveBeenCalled();
+  });
+
+  it("lists the provider models and fills the selected one into the model field", async () => {
+    vi.mocked(listAvailableModels).mockResolvedValue([
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
+    ]);
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.change(screen.getByLabelText("API 地址"), {
+      target: { value: "https://api.deepseek.com" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "检查可用模型" }));
+
+    expect(await screen.findByText("deepseek-v4-pro")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "deepseek-v4-pro" }));
+
+    expect(screen.getByLabelText("模型名称")).toHaveValue("deepseek-v4-pro");
+  });
+
+  it("warns when the current model is missing from the provider list", async () => {
+    vi.mocked(listAvailableModels).mockResolvedValue([
+      "deepseek-v4-flash",
+      "deepseek-v4-pro",
+    ]);
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.change(screen.getByLabelText("API 地址"), {
+      target: { value: "https://api.deepseek.com" },
+    });
+    fireEvent.change(screen.getByLabelText("模型名称"), {
+      target: { value: "deepseek-chat" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "检查可用模型" }));
+
+    expect(await screen.findByText(/不在该 API 的可用列表里/)).toBeInTheDocument();
   });
 
   it("explains that an empty API key keeps the saved credential", async () => {

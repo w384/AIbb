@@ -495,7 +495,7 @@ async fn test_connection_verifies_the_configured_model_after_models_succeeds() {
 }
 
 #[tokio::test]
-async fn test_connection_rejects_a_model_missing_from_the_provider_catalog() {
+async fn test_connection_probes_chat_when_the_model_is_missing_from_the_catalog() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/v1/models"))
@@ -507,8 +507,40 @@ async fn test_connection_rejects_a_model_missing_from_the_provider_catalog() {
         .await;
     Mock::given(method("POST"))
         .and(path("/v1/chat/completions"))
-        .respond_with(ResponseTemplate::new(500))
-        .expect(0)
+        .and(body_json(json!({
+            "model": "configured-model",
+            "messages": [{"role": "user", "content": "回复 OK"}],
+            "stream": false,
+            "max_tokens": 1
+        })))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "choices": [{"message": {"content": "OK"}}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    client_for(&server)
+        .test_connection(CancellationToken::new())
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn test_connection_reports_model_not_found_when_the_chat_probe_is_rejected() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [{"id": "other-model"}]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("model not found"))
+        .expect(1)
         .mount(&server)
         .await;
 
@@ -518,6 +550,138 @@ async fn test_connection_rejects_a_model_missing_from_the_provider_catalog() {
         .unwrap_err();
 
     assert_eq!(error.code, ErrorCode::ModelNotFound.as_str());
+}
+
+#[tokio::test]
+async fn test_connection_retries_after_a_transient_provider_error() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        // First /models probe fails with 503; the retry then succeeds and the
+        // 1-token chat probe succeeds.
+        for (status, kind) in [
+            ("503 Service Unavailable", "error"),
+            ("200 OK", "models"),
+            ("200 OK", "chat"),
+        ] {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = socket.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = match kind {
+                "error" => "temporarily down".to_owned(),
+                "models" => r#"{"data":[{"id":"configured-model"}]}"#.to_owned(),
+                "chat" => r#"{"choices":[{"message":{"content":"OK"}}]}"#.to_owned(),
+                _ => String::new(),
+            };
+            let response = format!(
+                "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+
+    let client = OpenAiClient::new(
+        settings(format!("http://{address}/v1")),
+        FakeCredentialStore::with_key(SECRET),
+    );
+
+    client.test_connection(CancellationToken::new()).await.unwrap();
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn test_connection_gives_up_after_repeated_transient_failures() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        for _ in 0..3 {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            loop {
+                let read = socket.read(&mut buffer).await.unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let body = "temporarily down";
+            let response = format!(
+                "HTTP/1.1 503 Service Unavailable\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(response.as_bytes()).await.unwrap();
+        }
+    });
+
+    let client = OpenAiClient::new(
+        settings(format!("http://{address}/v1")),
+        FakeCredentialStore::with_key(SECRET),
+    );
+
+    let error = client
+        .test_connection(CancellationToken::new())
+        .await
+        .unwrap_err();
+
+    assert_eq!(error.code, ErrorCode::ProviderUnavailable.as_str());
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn list_models_returns_sorted_deduped_ids_from_the_provider_catalog() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .and(header("authorization", format!("Bearer {SECRET}")))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+            "data": [
+                {"id": "deepseek-v4-pro"},
+                {"id": "deepseek-v4-flash"},
+                {"id": "deepseek-v4-flash"}
+            ]
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let models = client_for(&server).list_models().await.unwrap();
+
+    assert_eq!(
+        models,
+        vec!["deepseek-v4-flash".to_string(), "deepseek-v4-pro".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn list_models_reports_unsupported_when_the_provider_has_no_models_endpoint() {
+    let server = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(404).set_body_string("not found"))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let error = client_for(&server).list_models().await.unwrap_err();
+
+    assert_eq!(error.code, "modelsUnsupported");
 }
 
 #[tokio::test]

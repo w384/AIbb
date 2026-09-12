@@ -9,6 +9,9 @@
     "allow-get-bootstrap-state",
     "allow-load-aibb-profile",
     "allow-open-settings-window",
-    "allow-submit-user-input"
+    "allow-submit-user-input",
+    "allow-archive-files",
+    "allow-take-pending-archive-paths",
+    "allow-archive-ledger"
   ]
 }

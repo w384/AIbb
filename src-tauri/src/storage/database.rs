@@ -10,6 +10,7 @@ use rusqlite::{params, Connection};
 use uuid::Uuid;
 
 use crate::{
+    archive::models::ArchiveLedgerEntry,
     error::{AppError, ErrorCode},
     exploration::{CancelOutcome, ExplorationRecord, ExplorationStatus, ExplorationStore},
 };
@@ -169,6 +170,118 @@ impl Database {
             )
             .map(|_| ())
             .map_err(|_| storage_error())
+    }
+
+    // ---- archive ----
+
+    pub fn load_archive_settings(&self) -> Result<(String, bool), AppError> {
+        self.connection()?
+            .query_row(
+                "SELECT archive_root, archive_auto_discover \
+                 FROM app_settings WHERE singleton = 1",
+                [],
+                |row| {
+                    Ok((
+                        row.get::<_, String>(0)?,
+                        row.get::<_, i64>(1)? != 0,
+                    ))
+                },
+            )
+            .map_err(|_| storage_error())
+    }
+
+    pub fn save_archive_settings(&self, root: &str, auto_discover: bool) -> Result<(), AppError> {
+        self.connection()?
+            .execute(
+                "UPDATE app_settings SET archive_root = ?1, archive_auto_discover = ?2 \
+                 WHERE singleton = 1",
+                params![root, auto_discover],
+            )
+            .map(|_| ())
+            .map_err(|_| storage_error())
+    }
+
+    pub fn load_archive_structure_lib(&self) -> Result<Option<(String, String)>, AppError> {
+        self.connection()?
+            .query_row(
+                "SELECT template_name, templates_json \
+                 FROM archive_structure_lib WHERE singleton = 1",
+                [],
+                |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            )
+            .map(Some)
+            .or_else(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => Ok(None),
+                _ => Err(storage_error()),
+            })
+    }
+
+    pub fn save_archive_structure_lib(&self, name: &str, templates_json: &str) -> Result<(), AppError> {
+        self.connection()?
+            .execute(
+                "INSERT INTO archive_structure_lib(singleton, template_name, templates_json) \
+                 VALUES (1, ?1, ?2) \
+                 ON CONFLICT(singleton) DO UPDATE SET \
+                   template_name = excluded.template_name, \
+                   templates_json = excluded.templates_json",
+                params![name, templates_json],
+            )
+            .map(|_| ())
+            .map_err(|_| storage_error())
+    }
+
+    pub fn insert_archive_ledger(&self, entry: &ArchiveLedgerEntry) -> Result<(), AppError> {
+        self.connection()?
+            .execute(
+                "INSERT INTO archive_ledger(\
+                   id, file_name, project, category, period, version, \
+                   archive_rel_path, backup_rel_path, status, error_code, created_at\
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                params![
+                    entry.id,
+                    entry.file_name,
+                    entry.project,
+                    entry.category,
+                    entry.period,
+                    entry.version,
+                    entry.archive_rel_path,
+                    entry.backup_rel_path,
+                    entry.status,
+                    entry.error_code,
+                    entry.created_at
+                ],
+            )
+            .map(|_| ())
+            .map_err(|_| storage_error())
+    }
+
+    pub fn list_archive_ledger(&self, limit: usize) -> Result<Vec<ArchiveLedgerEntry>, AppError> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, file_name, project, category, period, version, \
+                 archive_rel_path, backup_rel_path, status, error_code, created_at \
+                 FROM archive_ledger ORDER BY created_at DESC LIMIT ?",
+            )
+            .map_err(|_| storage_error())?;
+        let rows = statement
+            .query_map([limit as i64], |row| {
+                Ok(ArchiveLedgerEntry {
+                    id: row.get(0)?,
+                    file_name: row.get(1)?,
+                    project: row.get(2)?,
+                    category: row.get(3)?,
+                    period: row.get(4)?,
+                    version: row.get(5)?,
+                    archive_rel_path: row.get(6)?,
+                    backup_rel_path: row.get(7)?,
+                    status: row.get(8)?,
+                    error_code: row.get(9)?,
+                    created_at: row.get(10)?,
+                })
+            })
+            .map_err(|_| storage_error())?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(|_| storage_error())
     }
 
     pub(crate) fn connection(&self) -> Result<MutexGuard<'_, Connection>, AppError> {

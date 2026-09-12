@@ -1,0 +1,12 @@
+﻿# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-archive-ledger"
+description = "Enables the archive_ledger command without any pre-configured scope."
+commands.allow = ["archive_ledger"]
+
+[[permission]]
+identifier = "deny-archive-ledger"
+description = "Denies the archive_ledger command without any pre-configured scope."
+commands.deny = ["archive_ledger"]
+

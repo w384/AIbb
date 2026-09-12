@@ -121,3 +121,65 @@ export interface ExplorationCompleteEvent {
 export interface ExplorationErrorEvent extends AppErrorPayload {
   taskId: string;
 }
+
+// ── Archive (drag a file onto AIbb) ──────────────────────────────────────
+
+export interface CategoryRule {
+  name: string;
+  keywords: string[];
+}
+
+export interface StructureTemplate {
+  name: string;
+  categories: CategoryRule[];
+  hierarchy: string[];
+  includeSource: boolean;
+}
+
+export interface ArchiveSettings {
+  root: string;
+  autoDiscover: boolean;
+  templateName: string;
+  templates: StructureTemplate[];
+}
+
+export interface SaveArchiveSettings {
+  root: string;
+  autoDiscover: boolean;
+  templateName: string;
+  templates: StructureTemplate[];
+}
+
+export interface DiscoveredStructure {
+  hierarchy: string[];
+  categories: CategoryRule[];
+  detectedFrom: string | null;
+}
+
+export interface ArchiveFileResult {
+  fileName: string;
+  ok: boolean;
+  duplicate: boolean;
+  reason: string | null;
+  project: string | null;
+  category: string | null;
+  period: string | null;
+  version: string | null;
+  archiveRel: string | null;
+  archiveAbs: string | null;
+  backupRel: string | null;
+}
+
+export interface ArchiveLedgerEntry {
+  id: string;
+  fileName: string;
+  project: string;
+  category: string;
+  period: string;
+  version: string;
+  archiveRelPath: string;
+  backupRelPath: string | null;
+  status: string;
+  errorCode: string | null;
+  createdAt: number;
+}

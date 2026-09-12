@@ -13,9 +13,18 @@ use crate::error::{AppError, ErrorCode};
 use super::validate_url;
 
 const SEARCH_ENDPOINT: &str = "https://html.duckduckgo.com/html/";
-const FALLBACK_SEARCH_ENDPOINT: &str = "https://www.bing.com/search";
+const FALLBACK_SEARCH_ENDPOINTS: &[&str] = &[
+    "https://www.bing.com/search",
+    "https://cn.bing.com/search",
+];
 const USER_AGENT: &str = "AIbb/0.1 public-read-only";
-const SEARCH_TIMEOUT: Duration = Duration::from_secs(12);
+/// Ceiling for the whole search (all endpoints combined).
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(20);
+/// Per-endpoint budget. A blocked/unresponsive host (e.g. an unreachable
+/// region-restricted engine) must not consume the whole budget: on expiry the
+/// chain moves to the next fallback.
+const SEARCH_ENDPOINT_TIMEOUT: Duration = Duration::from_secs(6);
+const SEARCH_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_SEARCH_RESPONSE_BYTES: usize = 2_000_000;
 
 #[async_trait]
@@ -26,17 +35,20 @@ pub trait SearchProvider: Send + Sync {
 pub struct DuckDuckGoHtmlSearch {
     http: reqwest::Client,
     endpoint: Url,
-    fallback_endpoint: Option<Url>,
+    fallbacks: Vec<Url>,
     cancellation: CancellationToken,
 }
 
 impl DuckDuckGoHtmlSearch {
     pub fn new(cancellation: CancellationToken) -> Result<Self, AppError> {
         let http = build_search_client(reqwest::Client::builder())?;
-        Self::with_endpoints(
+        Self::with_fallbacks(
             http,
             SEARCH_ENDPOINT.to_owned(),
-            Some(FALLBACK_SEARCH_ENDPOINT.to_owned()),
+            FALLBACK_SEARCH_ENDPOINTS
+                .iter()
+                .map(|endpoint| (*endpoint).to_owned())
+                .collect(),
             cancellation,
         )
     }
@@ -53,32 +65,57 @@ impl DuckDuckGoHtmlSearch {
     fn with_endpoints(
         http: reqwest::Client,
         endpoint: String,
-        fallback_endpoint: Option<String>,
+        fallback: Option<String>,
+        cancellation: CancellationToken,
+    ) -> Result<Self, AppError> {
+        Self::with_fallbacks(
+            http,
+            endpoint,
+            fallback.into_iter().collect(),
+            cancellation,
+        )
+    }
+
+    fn with_fallbacks(
+        http: reqwest::Client,
+        endpoint: String,
+        fallbacks: Vec<String>,
         cancellation: CancellationToken,
     ) -> Result<Self, AppError> {
         let endpoint = Url::parse(&endpoint).map_err(|_| search_error("invalid endpoint"))?;
-        let fallback_endpoint = fallback_endpoint
+        let fallbacks = fallbacks
+            .into_iter()
             .map(|endpoint| Url::parse(&endpoint).map_err(|_| search_error("invalid endpoint")))
-            .transpose()?;
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             http,
             endpoint,
-            fallback_endpoint,
+            fallbacks,
             cancellation,
         })
     }
 
     async fn search_inner(&self, query: &str, limit: usize) -> Result<Vec<String>, AppError> {
-        match self.search_endpoint(&self.endpoint, query, limit).await {
-            Ok(results) => Ok(results),
-            Err(error) if error.code == ErrorCode::PublicSearchUnavailable.as_str() => {
-                let Some(fallback_endpoint) = self.fallback_endpoint.as_ref() else {
-                    return Err(error);
-                };
-                self.search_endpoint(fallback_endpoint, query, limit).await
+        let mut last_unavailable = None;
+        for endpoint in std::iter::once(&self.endpoint).chain(self.fallbacks.iter()) {
+            let attempt = tokio::time::timeout(
+                SEARCH_ENDPOINT_TIMEOUT,
+                self.search_endpoint(endpoint, query, limit),
+            )
+            .await;
+            let result = match attempt {
+                Ok(result) => result,
+                Err(_) => Err(search_error("search endpoint timeout")),
+            };
+            match result {
+                Ok(results) => return Ok(results),
+                Err(error) if error.code == ErrorCode::PublicSearchUnavailable.as_str() => {
+                    last_unavailable = Some(error);
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => Err(error),
         }
+        Err(last_unavailable.unwrap_or_else(|| search_error("search unavailable")))
     }
 
     async fn search_endpoint(
@@ -135,6 +172,7 @@ fn build_search_client(builder: reqwest::ClientBuilder) -> Result<reqwest::Clien
     builder
         .redirect(reqwest::redirect::Policy::none())
         .no_proxy()
+        .connect_timeout(SEARCH_CONNECT_TIMEOUT)
         .build()
         .map_err(search_error)
 }
@@ -237,6 +275,8 @@ mod tests {
     };
     use tokio_util::sync::CancellationToken;
 
+    use crate::error::ErrorCode;
+
     use super::{build_search_client, parse_result_links, DuckDuckGoHtmlSearch, SearchProvider};
 
     #[test]
@@ -317,6 +357,68 @@ mod tests {
         );
         primary_task.await.unwrap();
         fallback_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn public_search_tries_every_fallback_before_giving_up() {
+        let primary = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let second = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let primary_endpoint = format!("http://{}/search", primary.local_addr().unwrap());
+        let first_endpoint = format!("http://{}/search", first.local_addr().unwrap());
+        let second_endpoint = format!("http://{}/search", second.local_addr().unwrap());
+        let primary_task = tokio::spawn(serve_once_with_status(
+            primary,
+            "202 Accepted",
+            "<html>verification required</html>",
+        ));
+        let first_task = tokio::spawn(serve_once_with_status(first, "302 Found", ""));
+        let second_task = tokio::spawn(serve_once(
+            second,
+            r#"<li class="b_algo"><h2><a href="https://example.com/cn-bing">CN result</a></h2></li>"#,
+        ));
+        let search = DuckDuckGoHtmlSearch::with_fallbacks(
+            build_search_client(reqwest::Client::builder()).unwrap(),
+            primary_endpoint,
+            vec![first_endpoint, second_endpoint],
+            CancellationToken::new(),
+        )
+        .unwrap();
+
+        assert_eq!(
+            search.search("AIbb", 1).await.unwrap(),
+            vec!["https://example.com/cn-bing".to_string()]
+        );
+        primary_task.await.unwrap();
+        first_task.await.unwrap();
+        second_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn public_search_reports_unavailable_when_every_endpoint_fails() {
+        let primary = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let first = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let primary_endpoint = format!("http://{}/search", primary.local_addr().unwrap());
+        let first_endpoint = format!("http://{}/search", first.local_addr().unwrap());
+        let primary_task = tokio::spawn(serve_once_with_status(
+            primary,
+            "503 Service Unavailable",
+            "down",
+        ));
+        let first_task = tokio::spawn(serve_once_with_status(first, "503 Service Unavailable", "down"));
+        let search = DuckDuckGoHtmlSearch::with_fallbacks(
+            build_search_client(reqwest::Client::builder()).unwrap(),
+            primary_endpoint,
+            vec![first_endpoint],
+            CancellationToken::new(),
+        )
+        .unwrap();
+
+        let error = search.search("AIbb", 1).await.unwrap_err();
+
+        assert_eq!(error.code, ErrorCode::PublicSearchUnavailable.as_str());
+        primary_task.await.unwrap();
+        first_task.await.unwrap();
     }
 
     #[tokio::test]

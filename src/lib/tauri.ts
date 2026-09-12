@@ -4,14 +4,19 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   ApiSettings,
   AibbProfile,
+  ArchiveFileResult,
+  ArchiveLedgerEntry,
+  ArchiveSettings,
   BootstrapState,
   ChatCompleteEvent,
   ChatDeltaEvent,
   ChatErrorEvent,
+  DiscoveredStructure,
   ExplorationCompleteEvent,
   ExplorationErrorEvent,
   ExplorationProgressEvent,
   InputDisposition,
+  SaveArchiveSettings,
   SaveSettings,
 } from "../contracts";
 
@@ -78,6 +83,10 @@ export function testConnection(): Promise<void> {
   return invoke("test_connection");
 }
 
+export function listAvailableModels(): Promise<string[]> {
+  return invoke("list_available_models");
+}
+
 export function clearMemory(): Promise<void> {
   return invoke("clear_memory");
 }
@@ -103,3 +112,35 @@ export const listenExplorationError = (
 ) => listenFor("exploration://error", listener);
 export const listenProfileUpdated = (listener: PayloadListener<AibbProfile>) =>
   listenFor("profile://updated", listener);
+
+/** Fired by the host after a file drop stashes paths for the chat window. */
+export const listenArchivePending = (listener: PayloadListener<number>) =>
+  listenFor("archive://pending", listener);
+
+export function openArchiveWindow(paths: string[]): Promise<void> {
+  return invoke("open_archive_window", { paths });
+}
+
+export function takePendingArchivePaths(): Promise<string[]> {
+  return invoke("take_pending_archive_paths");
+}
+
+export function archiveFiles(paths: string[], project: string): Promise<ArchiveFileResult[]> {
+  return invoke("archive_files", { paths, project });
+}
+
+export function loadArchiveSettings(): Promise<ArchiveSettings> {
+  return invoke("load_archive_settings");
+}
+
+export function saveArchiveSettings(settings: SaveArchiveSettings): Promise<void> {
+  return invoke("save_archive_settings", { settings });
+}
+
+export function discoverArchiveStructure(): Promise<DiscoveredStructure | null> {
+  return invoke("discover_archive_structure");
+}
+
+export function archiveLedger(limit: number): Promise<ArchiveLedgerEntry[]> {
+  return invoke("archive_ledger", { limit });
+}

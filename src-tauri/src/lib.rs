@@ -1,4 +1,5 @@
 pub mod app_state;
+pub mod archive;
 pub mod commands;
 pub mod domain;
 pub mod error;
@@ -12,11 +13,18 @@ pub mod storage;
 pub mod web;
 
 use app_state::AppState;
+use archive::service::ArchiveService;
+use commands::archive::{
+    archive_files, archive_ledger, discover_archive_structure, load_archive_settings,
+    open_archive_window, save_archive_settings, take_pending_archive_paths,
+};
 use commands::chat::{build_chat_service, submit_user_input};
 use commands::exploration::build_exploration_orchestrator;
 use commands::memory::clear_memory;
 use commands::profile::{load_aibb_profile, reset_aibb_avatar, save_aibb_avatar, save_aibb_name};
-use commands::settings::{clear_api_key, load_settings, save_settings, test_connection};
+use commands::settings::{
+    clear_api_key, list_available_models, load_settings, save_settings, test_connection,
+};
 use commands::window::{
     exit_app, open_settings_window, save_pet_position, start_pet_drag, toggle_chat_window,
 };
@@ -66,20 +74,24 @@ pub fn run() {
             let profile = tauri::async_runtime::block_on(settings.load_aibb_profile())?;
             let exploration = build_exploration_orchestrator(
                 app.handle().clone(),
-                database,
+                database.clone(),
                 memory.clone(),
                 settings.clone(),
             );
             let chat = build_chat_service(app.handle().clone(), memory.clone(), settings.clone());
+            let archive = ArchiveService::new(database.clone(), app.path().app_data_dir()?);
             tauri::async_runtime::block_on(exploration.recover_interrupted())?;
             app.manage(AppState::with_services(
                 bootstrap,
                 settings.clone(),
                 memory,
+                archive,
                 chat,
                 exploration,
             ));
             platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
+            #[cfg(desktop)]
+            platform::tray::install_tray(app.handle(), &profile.name)?;
             commands::profile::publish_profile_updated(app.handle(), &profile);
             Ok(())
         })
@@ -94,12 +106,20 @@ pub fn run() {
             save_settings,
             clear_api_key,
             test_connection,
+            list_available_models,
             load_aibb_profile,
             save_aibb_name,
             save_aibb_avatar,
             reset_aibb_avatar,
             clear_memory,
-            submit_user_input
+            submit_user_input,
+            archive_files,
+            load_archive_settings,
+            save_archive_settings,
+            discover_archive_structure,
+            take_pending_archive_paths,
+            open_archive_window,
+            archive_ledger
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
@@ -157,7 +177,8 @@ mod tests {
                 "allow-toggle-chat-window",
                 "allow-open-settings-window",
                 "allow-start-pet-drag",
-                "allow-save-pet-position"
+                "allow-save-pet-position",
+                "allow-open-archive-window"
             ])
         );
     }
@@ -209,7 +230,10 @@ mod tests {
                 "allow-get-bootstrap-state",
                 "allow-load-aibb-profile",
                 "allow-open-settings-window",
-                "allow-submit-user-input"
+                "allow-submit-user-input",
+                "allow-archive-files",
+                "allow-take-pending-archive-paths",
+                "allow-archive-ledger"
             ])
         );
     }
@@ -232,12 +256,16 @@ mod tests {
                 "allow-load-settings",
                 "allow-save-settings",
                 "allow-test-connection",
+                "allow-list-available-models",
                 "allow-clear-memory",
                 "allow-exit-app",
                 "allow-load-aibb-profile",
                 "allow-save-aibb-name",
                 "allow-save-aibb-avatar",
-                "allow-reset-aibb-avatar"
+                "allow-reset-aibb-avatar",
+                "allow-load-archive-settings",
+                "allow-save-archive-settings",
+                "allow-discover-archive-structure"
             ])
         );
     }

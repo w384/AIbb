@@ -18,6 +18,18 @@ use super::{
     TransportTimeouts,
 };
 
+/// How many extra attempts `test_connection` makes after a transient failure
+/// (5xx, transport error, timeout, or rate limit) before giving up.
+const MAX_CONNECTION_ATTEMPTS: usize = 2;
+const CONNECTION_RETRY_DELAY: std::time::Duration = std::time::Duration::from_millis(600);
+
+fn is_transient_error(error: &AppError) -> bool {
+    let code = error.code.as_str();
+    code == ErrorCode::ProviderUnavailable.as_str()
+        || code == ErrorCode::RequestTimeout.as_str()
+        || code == ErrorCode::RateLimited.as_str()
+}
+
 pub struct OpenAiClient {
     http: reqwest::Client,
     settings: ApiSettings,
@@ -31,6 +43,49 @@ impl OpenAiClient {
         C: CredentialStore + 'static,
     {
         Self::with_timeouts(settings, credentials, TransportTimeouts::default())
+    }
+
+    async fn test_connection_once(
+        &self,
+        cancellation: &CancellationToken,
+    ) -> Result<(), AppError> {
+        let operation = async {
+            let api_key = self.api_key().await?;
+            let request = self.http.get(self.endpoint("models")).bearer_auth(&api_key);
+            let response = self
+                .send_with_header_timeout(request, cancellation, &api_key)
+                .await?;
+            let status = response.status();
+            let body = response.text().await.map_err(|error| {
+                AppError::from_code(ErrorCode::ProviderUnavailable)
+                    .with_diagnostic(error.to_string(), Some(&api_key))
+            })?;
+
+            if status.is_success() {
+                // Parse the catalog to reject a 200 that is not a model list
+                // (e.g. a website login page behind a wrong API base). A valid
+                // catalog is advisory only: the chat endpoint is authoritative,
+                // because some providers (e.g. DeepSeek) serve checkpoint ids
+                // that differ from the chat-accepted alias. Probe it with a
+                // 1-token completion and let IT decide whether the model
+                // exists.
+                let _catalog = parse_models_ids(&body)?;
+                return self.connection_fallback(&api_key, cancellation).await;
+            }
+            if is_unsupported(status, &body) {
+                return self.connection_fallback(&api_key, cancellation).await;
+            }
+
+            Err(AppError::from_http_body(
+                status.as_u16(),
+                &body,
+                Some(&api_key),
+                true,
+            ))
+        };
+
+        self.execute_with_total(cancellation.clone(), operation)
+            .await
     }
 
     pub fn with_timeouts<C>(
@@ -314,11 +369,33 @@ impl LlmTransport for OpenAiClient {
     }
 
     async fn test_connection(&self, cancellation: CancellationToken) -> Result<(), AppError> {
+        let mut retried = 0usize;
+        loop {
+            match self.test_connection_once(&cancellation).await {
+                Ok(()) => return Ok(()),
+                Err(error) if retried < MAX_CONNECTION_ATTEMPTS && is_transient_error(&error) => {
+                    retried += 1;
+                    tokio::select! {
+                        _ = cancellation.cancelled() => {
+                            return Err(AppError::from_code(ErrorCode::Cancelled));
+                        }
+                        _ = tokio::time::sleep(CONNECTION_RETRY_DELAY) => {}
+                    }
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
+    async fn list_models(&self) -> Result<Vec<String>, AppError> {
         let operation = async {
             let api_key = self.api_key().await?;
-            let request = self.http.get(self.endpoint("models")).bearer_auth(&api_key);
+            let request = self
+                .http
+                .get(self.endpoint("models"))
+                .bearer_auth(&api_key);
             let response = self
-                .send_with_header_timeout(request, &cancellation, &api_key)
+                .send_with_header_timeout(request, &CancellationToken::new(), &api_key)
                 .await?;
             let status = response.status();
             let body = response.text().await.map_err(|error| {
@@ -327,13 +404,25 @@ impl LlmTransport for OpenAiClient {
             })?;
 
             if status.is_success() {
-                parse_models_response(&body, &self.settings.model)?;
-                return self.connection_fallback(&api_key, &cancellation).await;
+                let value: Value = serde_json::from_str(&body).map_err(invalid_response)?;
+                let models = value
+                    .get("data")
+                    .and_then(Value::as_array)
+                    .ok_or_else(|| invalid_response("missing models data array"))?;
+                let mut ids: Vec<String> = models
+                    .iter()
+                    .filter_map(|model| model.get("id").and_then(Value::as_str).map(str::to_owned))
+                    .collect();
+                ids.sort();
+                ids.dedup();
+                return Ok(ids);
             }
             if is_unsupported(status, &body) {
-                return self.connection_fallback(&api_key, &cancellation).await;
+                return Err(AppError::new(
+                    "modelsUnsupported",
+                    "This provider does not expose a model list.",
+                ));
             }
-
             Err(AppError::from_http_body(
                 status.as_u16(),
                 &body,
@@ -342,7 +431,7 @@ impl LlmTransport for OpenAiClient {
             ))
         };
 
-        self.execute_with_total(cancellation.clone(), operation)
+        self.execute_with_total(CancellationToken::new(), operation)
             .await
     }
 }
@@ -409,20 +498,16 @@ fn parse_connection_response(body: &str) -> Result<(), AppError> {
         .ok_or_else(|| invalid_response("missing chat completion message"))
 }
 
-fn parse_models_response(body: &str, configured_model: &str) -> Result<(), AppError> {
+fn parse_models_ids(body: &str) -> Result<Vec<String>, AppError> {
     let value: Value = serde_json::from_str(body).map_err(invalid_response)?;
     let models = value
         .get("data")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid_response("missing models data array"))?;
-    if models
+    Ok(models
         .iter()
-        .any(|model| model.get("id").and_then(Value::as_str) == Some(configured_model))
-    {
-        Ok(())
-    } else {
-        Err(AppError::from_code(ErrorCode::ModelNotFound))
-    }
+        .filter_map(|model| model.get("id").and_then(Value::as_str).map(str::to_owned))
+        .collect())
 }
 
 fn parse_response_text_value(value: &Value) -> Result<String, AppError> {

@@ -1,0 +1,12 @@
+﻿# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-discover-archive-structure"
+description = "Enables the discover_archive_structure command without any pre-configured scope."
+commands.allow = ["discover_archive_structure"]
+
+[[permission]]
+identifier = "deny-discover-archive-structure"
+description = "Denies the discover_archive_structure command without any pre-configured scope."
+commands.deny = ["discover_archive_structure"]
+

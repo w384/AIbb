@@ -86,4 +86,14 @@ pub trait LlmTransport: Send + Sync {
     ) -> Result<NativeWebOutcome, AppError>;
 
     async fn test_connection(&self, cancellation: CancellationToken) -> Result<(), AppError>;
+
+    /// List the model ids advertised by the provider's `GET /models`
+    /// endpoint. Defaults to "unsupported" so transports that only speak chat
+    /// completions do not need to implement it.
+    async fn list_models(&self) -> Result<Vec<String>, AppError> {
+        Err(AppError::new(
+            "modelsUnsupported",
+            "This provider does not expose a model list.",
+        ))
+    }
 }

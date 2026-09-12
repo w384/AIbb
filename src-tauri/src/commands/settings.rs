@@ -26,3 +26,10 @@ pub async fn clear_api_key(state: tauri::State<'_, AppState>) -> Result<(), AppE
 pub async fn test_connection(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
     state.settings.test_connection().await
 }
+
+#[tauri::command]
+pub async fn list_available_models(
+    state: tauri::State<'_, AppState>,
+) -> Result<Vec<String>, AppError> {
+    state.settings.list_available_models().await
+}

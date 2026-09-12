@@ -1,3 +1,4 @@
+pub mod archive;
 pub mod chat;
 pub mod exploration;
 pub mod memory;

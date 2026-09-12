@@ -1,7 +1,74 @@
-# Tauri + React + Typescript
+# AIbb — 本地优先的 AI 桌宠
 
-This template should help get you started developing with Tauri, React and Typescript in Vite.
+> 一只会聊天、会自己出去「玩」、还会帮你整理文件的桌面 AI 伙伴。
 
-## Recommended IDE Setup
+AIbb 是一只常驻 Windows 桌面的 AI 宠物。它不只是聊天机器人：你说「去玩」，它会自己去中文科学论坛、前沿资讯里探索一圈，回来给你写一篇见闻日记；你把文件拖到它身上，它会按你的规则自动归档整理。所有对话、记忆、归档记录都只保存在这台电脑上。
 
-- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)
+## 为什么是 AIbb
+
+| 你在意的事 | AIbb 的做法 |
+| --- | --- |
+| 🔒 隐私 | 完全本地运行，API Key 存于系统凭据（Windows Credential Manager），对话与记忆不上传任何服务器 |
+| 💰 成本 | 自带 API Key（BYOK）模式，用多少付多少，无订阅捆绑 |
+| 🐾 陪伴感 | 有昵称、头像、性格的桌宠，不是冷冰冰的对话框 |
+| 🧭 会探索 | 「去玩」自动联网检索中文科学论坛与前沿资讯（可随时要求外网内容），并写成日记 |
+| 📁 会整理 | 把文件拖到宠物身上即按规则归档（支持周/分类层级、关键词规则、结构库模板） |
+| 🖥 常驻 | 系统托盘常驻、始终置顶、开机自启可选 |
+
+## 核心功能
+
+1. **陪伴聊天** — 基于 DeepSeek 等兼容 OpenAI 的大模型，支持流式回复与记忆摘要。
+2. **出去玩（探索）** — 说「去玩」或「去 XX 方向玩」，AIbb 自动联网搜索、阅读、整理，带回一篇 4 条见闻的日记，附来源链接；默认优先中文科学论坛与前沿资讯，明确要求时才使用外网内容。
+3. **拖拽归档** — 把任意文件拖到宠物身上，自动按规则分类归档到项目目录（原文件保留不动）；支持自动识别归档区已有结构。
+4. **个性装扮** — 自定义昵称与头像，AIbb 只属于你。
+
+## 快速开始（3 步）
+
+1. 在 [platform.deepseek.com](https://platform.deepseek.com) 注册并创建 API Key（也支持其他兼容 OpenAI 的服务）。
+2. 打开 AIbb 设置，粘贴 API Key —— API 地址与模型名称会自动填好。
+3. 点「保存并测试」，提示连接成功后就可以聊天，或对它说「去玩」。
+
+> 密钥只保存在本机系统凭据里；对话框与归档面板会提示每一步该做什么。
+
+## 安装
+
+- **正式安装包**：从 Release 下载 `AIbb_x64-setup.exe`（NSIS）或 `.msi` 安装。
+- **从源码构建**（需要 Rust 1.80+ 与 pnpm）：
+
+```bash
+pnpm install
+pnpm tauri build        # 产物在 src-tauri/target/release/bundle/
+```
+
+## 开发
+
+```bash
+pnpm dev                # tauri dev，热更新
+pnpm typecheck          # tsc --noEmit
+pnpm test               # vitest（前端）
+cargo test --manifest-path src-tauri/Cargo.toml   # Rust 全量测试
+```
+
+技术栈：Tauri 2（Rust + WebView2）+ React 19 + rusqlite（本地存储）+ reqwest（联网检索，rustls）。
+
+## 隐私与数据
+
+- API Key：仅保存在系统凭据库（Windows Credential Manager），应用内不落盘明文。
+- 对话、记忆、探索记录、归档台账：全部存在本地 SQLite（`com.clink.aibb` 配置目录）。
+- 联网检索仅发生在你主动触发「去玩」或原生联网探索时，且只读取公开网页内容。
+- 无遥测、无账号、无云同步（当前版本）。
+
+## 路线图（建议）
+
+- v0.2：探索订阅源（RSS）、归档统计与全文检索、备份/导出
+- v0.3：多宠物形象与主题、更多模型供应商预设、自动更新
+- 商业化：免费核心 + 可选 Pro（内置 AI 用量 / 高级归档规则），详见 `docs/市场与盈利分析.md`
+
+## 支持与反馈
+
+- 项目仓库：本仓库（AIbb desktop pet）
+- 遇到问题请附带：操作系统版本、AIbb 版本、复现步骤与报错文案。
+
+---
+
+© Clink AI. 本地优先，快乐陪伴。

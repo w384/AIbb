@@ -6,6 +6,7 @@ import {
   type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
 } from "react";
+import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { AibbAvatar } from "../../components/AibbAvatar";
 import type {
   AibbProfile,
@@ -18,6 +19,7 @@ import {
   listenExplorationComplete,
   listenExplorationError,
   listenExplorationProgress,
+  openArchiveWindow,
   openSettingsWindow,
   startPetDrag,
   toggleChatWindow,
@@ -51,6 +53,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
     status,
   });
   const [chatOpenError, setChatOpenError] = useState<string | null>(null);
+  const [dragOver, setDragOver] = useState(false);
   const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
   const longPressTimer = useRef<number | null>(null);
   const activePointer = useRef<number | null>(null);
@@ -83,6 +86,27 @@ export function PetSurface({ status }: PetSurfaceProps) {
     }));
     installListener(listenExplorationError((event) => {
       dispatchPet({ type: "EXPLORATION_FAILED", taskId: event.taskId });
+    }));
+    installListener(getCurrentWebview().onDragDropEvent((event) => {
+      const { type } = event.payload;
+      if (type === "enter" || type === "over") {
+        setDragOver(true);
+        return;
+      }
+      if (type === "leave") {
+        setDragOver(false);
+        return;
+      }
+      // drop
+      setDragOver(false);
+      const paths = event.payload.paths;
+      if (paths.length === 0) {
+        setChatOpenError("没能读取拖入的文件，请再拖一次试试。");
+        return;
+      }
+      void openArchiveWindow(paths).catch(() => {
+        setChatOpenError("没能打开归档面板，请再拖一次试试。");
+      });
     }));
     void loadAibbProfile()
       .then((loadedProfile) => {
@@ -189,7 +213,10 @@ export function PetSurface({ status }: PetSurfaceProps) {
   }
 
   return (
-    <main className="pet-surface" data-status={petState.status}>
+    <main
+      className={`pet-surface${dragOver ? " drop-active" : ""}`}
+      data-status={petState.status}
+    >
       {petState.status === "returned" && (
         <span className="pet-return-indicator" role="status">
           <span className="sr-only">我回来啦，点我看结果！</span>

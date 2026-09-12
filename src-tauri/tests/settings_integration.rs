@@ -2,6 +2,7 @@ use std::{fs, io::Cursor, path::PathBuf, sync::Arc};
 
 use aibb_desktop_pet_lib::{
     app_state::AppState,
+    archive::service::ArchiveService,
     current_bootstrap_state,
     domain::{BootstrapState, PetStatus, WebMode},
     error::AppError,
@@ -769,6 +770,7 @@ async fn renderer_bootstrap_refreshes_after_the_protected_key_changes() {
         },
         service,
         MemoryRepository::new(db.handle()),
+        ArchiveService::new(db.handle(), std::env::temp_dir()),
     );
 
     vault.set("newly-configured-key").await.unwrap();
@@ -793,6 +795,7 @@ fn persists_and_clamps_the_pet_position_after_restart() {
         },
         service,
         MemoryRepository::new(db.handle()),
+        ArchiveService::new(db.handle(), std::env::temp_dir()),
     );
 
     window_controller::save_pet_position(&state, 1900, 1060).unwrap();
@@ -896,7 +899,9 @@ fn migrations_create_the_required_schema_without_an_api_key_column() {
             "pet_y",
             "aibb_name",
             "avatar_filename",
-            "profile_version"
+            "profile_version",
+            "archive_root",
+            "archive_auto_discover"
         ]
     );
 

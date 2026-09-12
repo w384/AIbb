@@ -298,6 +298,33 @@ impl SettingsService {
         self.database.set_first_run_complete()
     }
 
+    pub async fn list_available_models(&self) -> Result<Vec<String>, AppError> {
+        let _operation = self.operation.lock().await;
+        let persisted = self.database.load_settings()?;
+        if persisted.api_base.trim().is_empty() {
+            return Err(AppError::new(
+                "invalidSettings",
+                "API 地址不能为空，请先填写 API 地址。",
+            ));
+        }
+        let web_mode = parse_web_mode(&persisted)?;
+        let settings = ApiSettings {
+            api_base: persisted.api_base,
+            model: persisted.model,
+            web_mode,
+            always_on_top: persisted.always_on_top,
+            autostart: persisted.autostart,
+            api_configured: false,
+        };
+        let api_key = self
+            .credentials
+            .get()
+            .await
+            .map_err(|_| credential_store_access_error())?;
+        let transport = (self.transport_factory)(settings, api_key);
+        transport.list_models().await
+    }
+
     pub(crate) fn exploration_transport(
         &self,
         settings: ApiSettings,

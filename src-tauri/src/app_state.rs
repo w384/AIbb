@@ -1,15 +1,19 @@
 use std::sync::RwLock;
 
-use crate::commands::chat::ChatService;
-use crate::domain::BootstrapState;
-use crate::exploration::ExplorationOrchestrator;
-use crate::memory::MemoryRepository;
-use crate::settings::SettingsService;
+use crate::{
+    archive::service::ArchiveService,
+    commands::chat::ChatService,
+    domain::BootstrapState,
+    exploration::ExplorationOrchestrator,
+    memory::MemoryRepository,
+    settings::SettingsService,
+};
 
 pub struct AppState {
     pub bootstrap: RwLock<BootstrapState>,
     pub settings: SettingsService,
     pub memory: MemoryRepository,
+    pub archive: ArchiveService,
     pub chat: Option<ChatService>,
     pub exploration: Option<ExplorationOrchestrator>,
 }
@@ -19,11 +23,13 @@ impl AppState {
         bootstrap: BootstrapState,
         settings: SettingsService,
         memory: MemoryRepository,
+        archive: ArchiveService,
     ) -> Self {
         Self {
             bootstrap: RwLock::new(bootstrap),
             settings,
             memory,
+            archive,
             chat: None,
             exploration: None,
         }
@@ -33,9 +39,10 @@ impl AppState {
         bootstrap: BootstrapState,
         settings: SettingsService,
         memory: MemoryRepository,
+        archive: ArchiveService,
         exploration: ExplorationOrchestrator,
     ) -> Self {
-        let mut state = Self::new(bootstrap, settings, memory);
+        let mut state = Self::new(bootstrap, settings, memory, archive);
         state.exploration = Some(exploration);
         state
     }
@@ -44,10 +51,11 @@ impl AppState {
         bootstrap: BootstrapState,
         settings: SettingsService,
         memory: MemoryRepository,
+        archive: ArchiveService,
         chat: ChatService,
         exploration: ExplorationOrchestrator,
     ) -> Self {
-        let mut state = Self::with_exploration(bootstrap, settings, memory, exploration);
+        let mut state = Self::with_exploration(bootstrap, settings, memory, archive, exploration);
         state.chat = Some(chat);
         state
     }

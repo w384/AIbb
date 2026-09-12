@@ -11,6 +11,7 @@
     "allow-toggle-chat-window",
     "allow-open-settings-window",
     "allow-start-pet-drag",
-    "allow-save-pet-position"
+    "allow-save-pet-position",
+    "allow-open-archive-window"
   ]
 }

@@ -1,15 +1,28 @@
 import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
-import type { AibbProfile, ApiSettings, AppErrorPayload, SaveSettings, WebMode } from "../../contracts";
+import type {
+  AibbProfile,
+  ApiSettings,
+  AppErrorPayload,
+  ArchiveSettings,
+  SaveArchiveSettings,
+  SaveSettings,
+  StructureTemplate,
+  WebMode,
+} from "../../contracts";
 import {
   clearMemory,
+  discoverArchiveStructure,
   exitApp,
+  listAvailableModels,
   loadAibbProfile,
+  loadArchiveSettings,
   loadSettings,
   listenProfileUpdated,
   resetAibbAvatar,
   saveAibbAvatar,
   saveAibbName,
+  saveArchiveSettings,
   saveSettings,
   testConnection,
 } from "../../lib/tauri";
@@ -49,7 +62,9 @@ function publicError(reason: unknown): AppErrorPayload {
   const messages: Record<string, string> = {
     authentication_failed:
       "认证失败。请确认 API Key 属于当前 API 地址，重新输入后再点“保存并测试”。",
-    model_not_found: "找不到这个模型，请检查模型名称后重试。",
+    model_not_found:
+      "找不到这个模型。请点模型名称旁的「检查可用模型」查看该 API 支持的名字，或确认 API 地址正确。",
+    modelsUnsupported: "这个 API 不支持查询模型列表，请按官方文档填写模型名称。",
     rate_limited: "请求过于频繁，请稍后再试。",
     request_timeout: "连接超时，请检查网络或 API 地址后重试。",
     provider_unavailable: "模型服务暂时不可用，请稍后再试。",
@@ -82,6 +97,12 @@ export function SettingsPanel() {
   const [confirmingClear, setConfirmingClear] = useState(false);
   const [settingsInFlight, setSettingsInFlight] = useState(false);
   const [profileInFlight, setProfileInFlight] = useState(false);
+  const [archive, setArchive] = useState<ArchiveSettings | null>(null);
+  const [archiveError, setArchiveError] = useState<AppErrorPayload | null>(null);
+  const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
+  const [archiveInFlight, setArchiveInFlight] = useState(false);
+  const [availableModels, setAvailableModels] = useState<string[] | null>(null);
+  const [checkingModels, setCheckingModels] = useState(false);
 
   useEffect(() => {
     let disposed = false;
@@ -108,6 +129,13 @@ export function SettingsPanel() {
       })
       .catch((reason: unknown) => {
         if (!disposed) setProfileError(publicError(reason));
+      });
+    void loadArchiveSettings()
+      .then((loaded) => {
+        if (!disposed) setArchive(loaded);
+      })
+      .catch((reason: unknown) => {
+        if (!disposed) setArchiveError(publicError(reason));
       });
     void listenProfileUpdated((updatedProfile) => {
       if (updatedProfile.version > profileRef.current.version) {
@@ -295,6 +323,164 @@ export function SettingsPanel() {
     }
   }
 
+  function updateArchiveRoot(value: string) {
+    setArchive((current) => (current ? { ...current, root: value } : current));
+  }
+
+  function updateArchiveAutoDiscover(checked: boolean) {
+    setArchive((current) =>
+      current ? { ...current, autoDiscover: checked } : current,
+    );
+  }
+
+  function updateTemplateName(name: string) {
+    setArchive((current) => (current ? { ...current, templateName: name } : current));
+  }
+
+  function updateTemplate(
+    templateIndex: number,
+    patch: Partial<StructureTemplate>,
+  ) {
+    setArchive((current) =>
+      current
+        ? {
+            ...current,
+            templates: current.templates.map((template, index) =>
+              index === templateIndex ? { ...template, ...patch } : template,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function updateCategory(
+    templateIndex: number,
+    categoryIndex: number,
+    patch: Partial<{ name: string; keywords: string[] }>,
+  ) {
+    setArchive((current) =>
+      current
+        ? {
+            ...current,
+            templates: current.templates.map((template, tIndex) =>
+              tIndex === templateIndex
+                ? {
+                    ...template,
+                    categories: template.categories.map((category, cIndex) =>
+                      cIndex === categoryIndex
+                        ? { ...category, ...patch }
+                        : category,
+                    ),
+                  }
+                : template,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function addCategory(templateIndex: number) {
+    setArchive((current) =>
+      current
+        ? {
+            ...current,
+            templates: current.templates.map((template, index) =>
+              index === templateIndex
+                ? {
+                    ...template,
+                    categories: [
+                      ...template.categories,
+                      { name: "新分类", keywords: [] },
+                    ],
+                  }
+                : template,
+            ),
+          }
+        : current,
+    );
+  }
+
+  function removeCategory(templateIndex: number, categoryIndex: number) {
+    setArchive((current) =>
+      current
+        ? {
+            ...current,
+            templates: current.templates.map((template, index) =>
+              index === templateIndex
+                ? {
+                    ...template,
+                    categories: template.categories.filter(
+                      (_, cIndex) => cIndex !== categoryIndex,
+                    ),
+                  }
+                : template,
+            ),
+          }
+        : current,
+    );
+  }
+
+  async function saveArchiveSettingsSection() {
+    if (!archive || archiveInFlight) return;
+    setArchiveError(null);
+    setArchiveNotice(null);
+    setArchiveInFlight(true);
+    try {
+      const payload: SaveArchiveSettings = {
+        root: archive.root.trim(),
+        autoDiscover: archive.autoDiscover,
+        templateName: archive.templateName,
+        templates: archive.templates,
+      };
+      await saveArchiveSettings(payload);
+      setArchiveNotice("归档设置已保存");
+    } catch (reason) {
+      setArchiveError(publicError(reason));
+    } finally {
+      setArchiveInFlight(false);
+    }
+  }
+
+  async function scanArchiveStructure() {
+    if (archiveInFlight) return;
+    setArchiveError(null);
+    setArchiveNotice(null);
+    setArchiveInFlight(true);
+    try {
+      const discovered = await discoverArchiveStructure();
+      if (!discovered) {
+        setArchiveNotice("归档区还没有可识别的结构，先归档一个文件试试。");
+      } else {
+        const hierarchy = discovered.hierarchy.join(" → ");
+        const categories = discovered.categories.map((category) => category.name).join("、");
+        setArchiveNotice(`扫描到「${hierarchy}」结构，分类：${categories}`);
+      }
+    } catch (reason) {
+      setArchiveError(publicError(reason));
+    } finally {
+      setArchiveInFlight(false);
+    }
+  }
+
+  async function checkAvailableModels() {
+    if (checkingModels) return;
+    setError(null);
+    setNotice(null);
+    setCheckingModels(true);
+    try {
+      const models = await listAvailableModels();
+      setAvailableModels(models);
+      if (models.length === 0) {
+        setNotice("该 API 返回的模型列表为空，请检查 API 地址。");
+      }
+    } catch (reason) {
+      setAvailableModels([]);
+      setError(publicError(reason));
+    } finally {
+      setCheckingModels(false);
+    }
+  }
+
   if (!loaded) return <main className="panel settings-panel">正在加载设置…</main>;
 
   return (
@@ -386,6 +572,51 @@ export function SettingsPanel() {
           </label>
         </div>
 
+        <div className="model-actions">
+          <button
+            aria-label="检查可用模型"
+            className="text-button model-check-button"
+            disabled={checkingModels || !settings.apiBase.trim()}
+            type="button"
+            onClick={() => void checkAvailableModels()}
+          >
+            {checkingModels ? "正在查询…" : "检查可用模型"}
+          </button>
+          <small className="model-hint">
+            DeepSeek 官方模型：deepseek-v4-flash、deepseek-v4-pro
+          </small>
+        </div>
+
+        {availableModels !== null && availableModels.length > 0 && (
+          <div className="model-list" aria-label="可用模型">
+            <span className="model-list-label">该 API 可用的模型：</span>
+            <div className="model-chips">
+              {availableModels.map((model) => {
+                const current = settings.model.trim() === model;
+                return (
+                  <button
+                    key={model}
+                    aria-pressed={current}
+                    className={`model-chip${current ? " selected" : ""}`}
+                    type="button"
+                    onClick={() => setSettings({ ...settings, model })}
+                  >
+                    {model}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {availableModels !== null &&
+          availableModels.length > 0 &&
+          settings.model.trim() &&
+          !availableModels.includes(settings.model.trim()) && (
+            <p className="feedback warning" role="status">
+              当前模型「{settings.model.trim()}」不在该 API 的可用列表里，点上方名称即可填入。
+            </p>
+          )}
+
         <div className="toggle-row">
           <label className="toggle-option">
             <input
@@ -407,6 +638,147 @@ export function SettingsPanel() {
           </label>
         </div>
 
+        {archive && (
+          <section className="archive-settings" aria-labelledby="archive-heading">
+            <h2 id="archive-heading">文件归档</h2>
+            <p className="settings-hint">
+              把文件拖到 AIbb 身上，AIbb 会自动分类归档到项目目录，原文件保留不动。
+            </p>
+            <label className="field">
+              <span>归档根目录</span>
+              <input
+                disabled={archiveInFlight}
+                value={archive.root}
+                onChange={(event) => updateArchiveRoot(event.target.value)}
+                placeholder="留空使用默认目录「本地归档」"
+              />
+            </label>
+            <div className="toggle-row">
+              <label className="toggle-option">
+                <input
+                  type="checkbox"
+                  disabled={archiveInFlight}
+                  checked={archive.autoDiscover}
+                  onChange={(event) => updateArchiveAutoDiscover(event.target.checked)}
+                />
+                <span>自动识别归档区已有结构</span>
+              </label>
+            </div>
+            <label className="field">
+              <span>结构库模板</span>
+              <select
+                disabled={archiveInFlight}
+                value={archive.templateName}
+                onChange={(event) => updateTemplateName(event.target.value)}
+              >
+                {archive.templates.map((template) => (
+                  <option key={template.name} value={template.name}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+            {archive.templates.map((template, templateIndex) => (
+              <fieldset key={template.name} className="template-editor">
+                <legend>模板「{template.name}」</legend>
+                <label className="field">
+                  <span>层级</span>
+                  <input
+                    disabled={archiveInFlight}
+                    value={template.hierarchy.join(", ")}
+                    onChange={(event) =>
+                      updateTemplate(templateIndex, {
+                        hierarchy: splitList(event.target.value),
+                      })
+                    }
+                  />
+                  <small>支持 week（周）、category（分类），例如：week, category</small>
+                </label>
+                <div className="toggle-row">
+                  <label className="toggle-option">
+                    <input
+                      type="checkbox"
+                      disabled={archiveInFlight}
+                      checked={template.includeSource}
+                      onChange={(event) =>
+                        updateTemplate(templateIndex, { includeSource: event.target.checked })
+                      }
+                    />
+                    <span>保留原始文件到「源文件」备份</span>
+                  </label>
+                </div>
+                <div className="category-editor" aria-label="分类规则">
+                  {template.categories.map((category, categoryIndex) => (
+                    <div
+                      key={`${templateIndex}-${categoryIndex}`}
+                      className="category-row"
+                    >
+                      <input
+                        aria-label="分类名"
+                        disabled={archiveInFlight}
+                        value={category.name}
+                        onChange={(event) =>
+                          updateCategory(templateIndex, categoryIndex, {
+                            name: event.target.value,
+                          })
+                        }
+                      />
+                      <input
+                        aria-label="关键词"
+                        disabled={archiveInFlight}
+                        placeholder="关键词，逗号分隔"
+                        value={category.keywords.join(", ")}
+                        onChange={(event) =>
+                          updateCategory(templateIndex, categoryIndex, {
+                            keywords: splitList(event.target.value),
+                          })
+                        }
+                      />
+                      <button
+                        aria-label={`删除分类 ${category.name}`}
+                        className="category-remove"
+                        disabled={archiveInFlight}
+                        type="button"
+                        onClick={() => removeCategory(templateIndex, categoryIndex)}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                  ))}
+                </div>
+                <button
+                  className="text-button"
+                  disabled={archiveInFlight}
+                  type="button"
+                  onClick={() => addCategory(templateIndex)}
+                >
+                  + 添加分类
+                </button>
+              </fieldset>
+            ))}
+            <div className="button-row">
+              <button
+                className="button secondary"
+                disabled={archiveInFlight}
+                type="button"
+                onClick={() => void scanArchiveStructure()}
+              >
+                扫描归档区
+              </button>
+              <button
+                className="button primary"
+                disabled={archiveInFlight}
+                type="button"
+                onClick={() => void saveArchiveSettingsSection()}
+              >
+                保存归档设置
+              </button>
+            </div>
+            {archiveError && <p className="feedback error" role="alert">{archiveError.message}</p>}
+            {archiveNotice && <p className="feedback success" role="status">{archiveNotice}</p>}
+          </section>
+        )}
+
         <div className="button-row">
           <button className="button secondary" type="submit" disabled={settingsInFlight}>仅保存</button>
           <button className="button primary" type="button" disabled={settingsInFlight} onClick={() => void saveAndTest()}>
@@ -418,6 +790,9 @@ export function SettingsPanel() {
           <button className="text-button" type="button" onClick={() => setConfirmingClear(true)}>清除记忆</button>
           <button className="text-button danger" type="button" onClick={() => void exitApp()}>退出 AIbb</button>
         </div>
+        <footer className="settings-footer">
+          AIbb · 本地优先 · 对话、记忆与归档记录只保存在这台电脑上
+        </footer>
       </form>
       {error && <p className="feedback error" role="alert">{error.message}</p>}
       {notice && <p className="feedback success" role="status">{notice}</p>}
@@ -441,4 +816,11 @@ function imageDataUrl(bytes: Uint8Array, mimeType: string): string {
   let binary = "";
   for (const byte of bytes) binary += String.fromCharCode(byte);
   return `data:${mimeType};base64,${btoa(binary)}`;
+}
+
+function splitList(value: string): string[] {
+  return value
+    .split(/[,，、\s]+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
 }

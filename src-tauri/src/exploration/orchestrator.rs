@@ -21,7 +21,10 @@ use crate::{
         build_exploration_prompt, ModelPrompt, EXPLORATION_SYSTEM_INSTRUCTION,
         SUMMARIZATION_INSTRUCTION,
     },
-    web::{DuckDuckGoHtmlSearch, FetchBudget, PageFetcher, SafePageFetcher, SearchProvider},
+    web::{
+        source_preference, DuckDuckGoHtmlSearch, FetchBudget, PageFetcher, SafePageFetcher,
+        SearchProvider,
+    },
 };
 
 use super::{
@@ -879,18 +882,19 @@ impl ExplorationOrchestrator {
             .complete(build_query_request(&context), cancellation.clone())
             .await?;
         let queries = parse_query_envelope(&query_raw)?;
+        // Prefer Chinese sources (science forums, frontier news) unless the
+        // user explicitly asked for foreign/overseas/English content.
+        let prefer_chinese = !source_preference::explicitly_wants_foreign(&context.current_input);
         let public_web = self.web.create(cancellation.clone())?;
         let mut seen = HashSet::new();
         let mut urls = Vec::new();
         for query in queries {
             ensure_not_cancelled(&cancellation)?;
-            for url in public_web
-                .search
-                .search(&query, 2)
-                .await?
-                .into_iter()
-                .take(2)
-            {
+            let results = source_preference::order_for_chinese(
+                public_web.search.search(&query, 2).await?,
+                prefer_chinese,
+            );
+            for url in results.into_iter().take(2) {
                 if seen.insert(url.clone()) {
                     urls.push(url);
                     if urls.len() == 8 {

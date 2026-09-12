@@ -2,6 +2,7 @@ import { act, fireEvent, render, waitFor, within } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { PetSurface } from "./PetSurface";
 import {
+  openArchiveWindow,
   openSettingsWindow,
   startPetDrag,
   toggleChatWindow,
@@ -22,12 +23,24 @@ let progressListener: Listener<ExplorationProgressEvent>;
 let completeListener: Listener<ExplorationCompleteEvent>;
 let errorListener: Listener<ExplorationErrorEvent>;
 let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
+type DragDropEvent = { payload: { type: string; paths?: string[] } };
+let dragDropHandler: ((event: DragDropEvent) => void) | undefined;
 const petUnlisteners = [vi.fn(), vi.fn(), vi.fn(), vi.fn()];
+
+vi.mock("@tauri-apps/api/webview", () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: vi.fn(async (handler: (event: DragDropEvent) => void) => {
+      dragDropHandler = handler;
+      return () => {};
+    }),
+  }),
+}));
 
 vi.mock("../../lib/tauri", () => ({
   openSettingsWindow: vi.fn(),
   startPetDrag: vi.fn(),
   toggleChatWindow: vi.fn(),
+  openArchiveWindow: vi.fn(async () => undefined),
   loadAibbProfile: vi.fn(),
   listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
     profileListener = listener;
@@ -50,6 +63,7 @@ vi.mock("../../lib/tauri", () => ({
 const mockOpenSettings = vi.mocked(openSettingsWindow);
 const mockStartPetDrag = vi.mocked(startPetDrag);
 const mockToggleChat = vi.mocked(toggleChatWindow);
+const mockOpenArchiveWindow = vi.mocked(openArchiveWindow);
 
 describe("PetSurface", () => {
   beforeEach(() => {
@@ -75,6 +89,27 @@ describe("PetSurface", () => {
     expect(fireEvent.contextMenu(pet)).toBe(false);
     expect(mockOpenSettings).toHaveBeenCalledTimes(1);
     expect(mockToggleChat).toHaveBeenCalledTimes(1);
+  });
+
+  it("hands dropped files over to the archive window via the native drag-drop event", async () => {
+    const view = render(<PetSurface status="idle" />);
+    await waitFor(() => expect(dragDropHandler).toBeDefined());
+
+    act(() => {
+      dragDropHandler!({ payload: { type: "enter", paths: ["C:\\drop\\集成方案.pdf"] } });
+    });
+    expect(view.container.querySelector(".pet-surface")?.className).toContain(
+      "drop-active",
+    );
+
+    act(() => {
+      dragDropHandler!({ payload: { type: "drop", paths: ["C:\\drop\\集成方案.pdf"] } });
+    });
+    await waitFor(() =>
+      expect(mockOpenArchiveWindow).toHaveBeenCalledWith([
+        "C:\\drop\\集成方案.pdf",
+      ]),
+    );
   });
 
   it("shows a stable error when the chat window cannot open", async () => {

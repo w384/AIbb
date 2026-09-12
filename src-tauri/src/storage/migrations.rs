@@ -113,6 +113,33 @@ ON explorations(round_number)
 WHERE status = 'completed' AND round_number IS NOT NULL;
 "#;
 
+const ARCHIVE_FEATURE: &str = r#"
+ALTER TABLE app_settings ADD COLUMN archive_root TEXT NOT NULL DEFAULT '';
+ALTER TABLE app_settings ADD COLUMN archive_auto_discover INTEGER NOT NULL DEFAULT 1;
+
+CREATE TABLE archive_structure_lib (
+  singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+  template_name TEXT NOT NULL DEFAULT '默认',
+  templates_json TEXT NOT NULL
+);
+
+CREATE TABLE archive_ledger (
+  id TEXT PRIMARY KEY,
+  file_name TEXT NOT NULL,
+  project TEXT NOT NULL,
+  category TEXT NOT NULL,
+  period TEXT NOT NULL,
+  version TEXT NOT NULL,
+  archive_rel_path TEXT NOT NULL,
+  backup_rel_path TEXT,
+  status TEXT NOT NULL,
+  error_code TEXT,
+  created_at INTEGER NOT NULL
+);
+
+CREATE INDEX archive_ledger_created_idx ON archive_ledger(created_at);
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
     Migrations::new(vec![
         M::up(INITIAL_SCHEMA),
@@ -120,6 +147,7 @@ pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Erro
         M::up(AIBB_PROFILE),
         M::up(OUTING_DIARIES),
         M::up(OUTING_UNIQUENESS),
+        M::up(ARCHIVE_FEATURE),
     ])
     .to_latest(connection)
 }

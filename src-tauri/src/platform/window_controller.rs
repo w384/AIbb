@@ -53,6 +53,19 @@ pub fn toggle_chat(app: &AppHandle, profile_name: &str) -> Result<(), AppError> 
     }
 }
 
+/// Show the chat window (creating it on first use), used both by the pet
+/// click toggle and by the file-drop archive flow.
+pub fn open_chat(app: &AppHandle, profile_name: &str) -> Result<(), AppError> {
+    let title = profile_window_title("chat", profile_name);
+    let window = get_or_create_window(app, "chat", &title, 420.0, 620.0)?;
+    window
+        .show()
+        .map_err(|error| window_error("show chat window", error))?;
+    window
+        .set_focus()
+        .map_err(|error| window_error("focus chat window", error))
+}
+
 pub fn open_settings(app: &AppHandle, profile_name: &str) -> Result<(), AppError> {
     let title = profile_window_title("settings", profile_name);
     let window = get_or_create_window(app, "settings", &title, 520.0, 640.0)?;

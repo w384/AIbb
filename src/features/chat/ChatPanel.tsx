@@ -6,6 +6,7 @@ import {
   type KeyboardEvent as ReactKeyboardEvent,
 } from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
+import { ArchivePanel } from "../archive/ArchivePanel";
 import type {
   AibbProfile,
   AppErrorPayload,
@@ -412,6 +413,17 @@ export function ChatPanel() {
           <span className="first-run-sparkle" aria-hidden="true">✦</span>
           <h2>你好呀！</h2>
           <p>{FIRST_RUN_GREETING}</p>
+          <ol className="first-run-steps">
+            <li>
+              在 <a href="https://platform.deepseek.com" target="_blank" rel="noreferrer">platform.deepseek.com</a>{" "}
+              注册并创建 API Key（也支持其他兼容 OpenAI 的服务）。
+            </li>
+            <li>点下面的按钮打开设置，粘贴 Key，API 地址与模型会自动填好。</li>
+            <li>点「保存并测试」，提示连接成功后就可以聊天和「去玩」啦。</li>
+          </ol>
+          <p className="first-run-privacy">
+            🔒 API Key 只保存在这台电脑的系统凭据里，对话与记忆也不会上传到任何服务器。
+          </p>
           <button className="chat-primary-button" type="button" onClick={() => void openSettingsWindow()}>
             打开 API 设置
           </button>
@@ -422,6 +434,7 @@ export function ChatPanel() {
             <span>{error.message}</span>
           </p>
         )}
+        <ArchivePanel />
       </main>
     );
   }
@@ -458,6 +471,7 @@ export function ChatPanel() {
           <span>{error.message}</span>
         </p>
       )}
+      <ArchivePanel />
       <form aria-label="发送消息" className="composer" onSubmit={submit}>
         <label>
           <span className="sr-only">消息</span>
