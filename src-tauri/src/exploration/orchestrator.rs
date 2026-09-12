@@ -12,8 +12,8 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        ExplorationImage, ExplorationResult, MemoryContext, OutingSource, SummaryCandidate,
-        WebMaterial, WebMode, WebPageMaterial,
+        CompletedOuting, ExplorationImage, ExplorationResult, MemoryContext, OutingSource,
+        SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
     },
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     llm::{ChatMessage, ChatRequest, LlmTransport, NativeWebOutcome, NativeWebRequest},
@@ -278,6 +278,7 @@ pub struct ExplorationRecord {
     pub items: Option<[String; 4]>,
     pub diary: Option<String>,
     pub sources: Option<Vec<OutingSource>>,
+    pub images: Option<Vec<ExplorationImage>>,
     pub round_number: Option<u64>,
     pub elapsed_seconds: Option<u64>,
     pub raw_response: Option<String>,
@@ -314,6 +315,10 @@ pub trait ExplorationStore: Send + Sync {
     async fn recover_interrupted(&self) -> Result<usize, AppError>;
     async fn load(&self, id: Uuid) -> Result<Option<ExplorationRecord>, AppError>;
     async fn completed_outings(&self) -> Result<u64, AppError>;
+    async fn load_completed_outings(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CompletedOuting>, AppError>;
 }
 
 #[async_trait]
@@ -659,6 +664,15 @@ impl ExplorationOrchestrator {
 
     pub async fn recover_interrupted(&self) -> Result<usize, AppError> {
         self.store.recover_interrupted().await
+    }
+
+    /// Most recent finished outings, newest first, for history playback in the
+    /// chat window after a restart.
+    pub async fn load_completed_outings(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CompletedOuting>, AppError> {
+        self.store.load_completed_outings(limit).await
     }
 
     async fn prepare(

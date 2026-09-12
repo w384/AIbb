@@ -98,6 +98,29 @@ export interface ExplorationResult {
   rawResponse: string;
 }
 
+/** One stored conversation message replayed when the chat window reopens. */
+export interface HistoryMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  createdAt: number;
+}
+
+/** A finished outing rebuilt as a diary card after a restart. */
+export interface CompletedOuting {
+  roundNumber: number;
+  diary: string;
+  sources: OutingSource[];
+  images: ExplorationImage[];
+  elapsedSeconds: number;
+  createdAt: number;
+}
+
+export interface ChatHistory {
+  messages: HistoryMessage[];
+  outings: CompletedOuting[];
+}
+
 export type OutingTimelineMessage =
   | {
       id: string;

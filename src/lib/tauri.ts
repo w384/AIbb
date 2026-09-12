@@ -11,6 +11,7 @@ import type {
   ChatCompleteEvent,
   ChatDeltaEvent,
   ChatErrorEvent,
+  ChatHistory,
   DiscoveredStructure,
   ExplorationCompleteEvent,
   ExplorationErrorEvent,
@@ -61,6 +62,10 @@ export function loadSettings(): Promise<ApiSettings> {
 
 export function loadAibbProfile(): Promise<AibbProfile> {
   return invoke("load_aibb_profile");
+}
+
+export function loadChatHistory(): Promise<ChatHistory> {
+  return invoke("load_chat_history");
 }
 
 export function saveAibbName(name: string): Promise<AibbProfile> {

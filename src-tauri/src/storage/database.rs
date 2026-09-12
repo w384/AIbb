@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     archive::models::ArchiveLedgerEntry,
+    domain::{CompletedOuting, ExplorationImage, OutingSource},
     error::{AppError, ErrorCode},
     exploration::{CancelOutcome, ExplorationRecord, ExplorationStatus, ExplorationStore},
 };
@@ -366,12 +367,14 @@ impl ExplorationStore for Database {
             i64::try_from(result.round_number).map_err(|_| exploration_storage_error())?;
         let elapsed_seconds =
             i64::try_from(result.elapsed_seconds).map_err(|_| exploration_storage_error())?;
+        let images =
+            serde_json::to_string(&result.images).map_err(|_| exploration_storage_error())?;
         let changed = transaction
             .execute(
                 "UPDATE explorations SET status = ?1, items_json = ?2, \
                    diary = ?3, sources_json = ?4, round_number = ?5, elapsed_seconds = ?6, \
                    next_outing_request = NULL, raw_response = ?7, error_code = NULL, \
-                   updated_at = ?8 WHERE id = ?9",
+                   images_json = ?8, updated_at = ?9 WHERE id = ?10",
                 params![
                     ExplorationStatus::Completed.as_storage_value(),
                     items,
@@ -380,6 +383,7 @@ impl ExplorationStore for Database {
                     round_number,
                     elapsed_seconds,
                     safe_raw_response,
+                    images,
                     now,
                     id.to_string()
                 ],
@@ -510,6 +514,54 @@ impl ExplorationStore for Database {
             .map_err(|_| exploration_storage_error())?;
         u64::try_from(count).map_err(|_| exploration_storage_error())
     }
+
+    async fn load_completed_outings(
+        &self,
+        limit: usize,
+    ) -> Result<Vec<CompletedOuting>, AppError> {
+        let connection = self.connection()?;
+        let limit = i64::try_from(limit).unwrap_or(i64::MAX);
+        let mut statement = connection
+            .prepare(
+                "SELECT round_number, diary, sources_json, images_json, elapsed_seconds, \
+                 created_at \
+                 FROM explorations WHERE status = 'completed' \
+                 ORDER BY created_at DESC LIMIT ?1",
+            )
+            .map_err(|_| exploration_storage_error())?;
+        let rows = statement
+            .query_map(params![limit], completed_outing_from_row)
+            .map_err(|_| exploration_storage_error())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| exploration_storage_error())
+    }
+}
+
+fn completed_outing_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CompletedOuting> {
+    let sources = json_list_from_row::<OutingSource>(row, 2)?;
+    let images = json_list_from_row::<ExplorationImage>(row, 3)?;
+    Ok(CompletedOuting {
+        round_number: u64::try_from(row.get::<_, Option<i64>>(0)?.unwrap_or(0))
+            .unwrap_or_default(),
+        diary: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+        sources,
+        images,
+        elapsed_seconds: u64::try_from(row.get::<_, Option<i64>>(4)?.unwrap_or(0))
+            .unwrap_or_default(),
+        created_at: row.get(5)?,
+    })
+}
+
+fn json_list_from_row<T: serde::de::DeserializeOwned>(
+    row: &rusqlite::Row<'_>,
+    index: usize,
+) -> rusqlite::Result<Vec<T>> {
+    let Some(raw) = row.get::<_, Option<String>>(index)? else {
+        return Ok(Vec::new());
+    };
+    serde_json::from_str(&raw).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(index, rusqlite::types::Type::Text, Box::new(error))
+    })
 }
 
 fn exploration_from_connection(
@@ -519,7 +571,8 @@ fn exploration_from_connection(
     let mut statement = connection
         .prepare(
             "SELECT id, status, user_direction, items_json, diary, sources_json, \
-             round_number, elapsed_seconds, raw_response, error_code, created_at, updated_at \
+             round_number, elapsed_seconds, raw_response, error_code, created_at, updated_at, \
+             images_json \
              FROM explorations WHERE id = ?1",
         )
         .map_err(|_| exploration_storage_error())?;
@@ -551,6 +604,12 @@ fn exploration_from_row(row: &rusqlite::Row<'_>) -> Result<ExplorationRecord, Ap
         .map(|sources| serde_json::from_str(&sources))
         .transpose()
         .map_err(|_| exploration_storage_error())?;
+    let images = row
+        .get::<_, Option<String>>(12)
+        .map_err(|_| exploration_storage_error())?
+        .map(|images| serde_json::from_str(&images))
+        .transpose()
+        .map_err(|_| exploration_storage_error())?;
     Ok(ExplorationRecord {
         id: Uuid::parse_str(&id).map_err(|_| exploration_storage_error())?,
         status: ExplorationStatus::from_storage_value(&status)
@@ -559,6 +618,7 @@ fn exploration_from_row(row: &rusqlite::Row<'_>) -> Result<ExplorationRecord, Ap
         items,
         diary: row.get(4).map_err(|_| exploration_storage_error())?,
         sources,
+        images,
         round_number: row
             .get::<_, Option<i64>>(6)
             .map_err(|_| exploration_storage_error())?

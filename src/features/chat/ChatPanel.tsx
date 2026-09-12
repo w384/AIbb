@@ -11,6 +11,8 @@ import type {
   AibbProfile,
   AppErrorPayload,
   BootstrapState,
+  ChatHistory,
+  CompletedOuting,
   ExplorationResult,
   ExplorationStatus,
   OutingTimelineMessage,
@@ -18,6 +20,7 @@ import type {
 import {
   getBootstrapState,
   loadAibbProfile,
+  loadChatHistory,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
@@ -134,6 +137,57 @@ function outingDiaryMessage(
     roundNumber: result.roundNumber,
     elapsedSeconds: result.elapsedSeconds,
   };
+}
+
+function historyDiaryMessage(outing: CompletedOuting): OutingTimelineMessage {
+  return {
+    id: `outing-history-${outing.createdAt}`,
+    role: "assistant",
+    kind: "outingDiary",
+    taskId: `history-${outing.createdAt}`,
+    content: outing.diary,
+    sources: outing.sources,
+    images: outing.images,
+    roundNumber: outing.roundNumber,
+    elapsedSeconds: outing.elapsedSeconds,
+  };
+}
+
+/**
+ * Rebuilds the stored conversation into one chronological timeline: text
+ * messages in place, and finished outings as diary cards. The plain diary
+ * text that the store also writes into `messages` is replaced by its card so
+ * it is not shown twice.
+ */
+function replayHistory(history: ChatHistory): TimelineMessage[] {
+  const unclaimed = new Map<string, CompletedOuting>();
+  for (const outing of history.outings) {
+    unclaimed.set(outing.diary, outing);
+  }
+  const timeline: Array<{ createdAt: number; message: TimelineMessage }> = [];
+  for (const message of history.messages) {
+    const outing =
+      message.role === "assistant" ? unclaimed.get(message.content) : undefined;
+    if (outing) {
+      unclaimed.delete(message.content);
+      timeline.push({ createdAt: outing.createdAt, message: historyDiaryMessage(outing) });
+      continue;
+    }
+    timeline.push({
+      createdAt: message.createdAt,
+      message: {
+        id: message.id,
+        role: message.role === "assistant" ? "assistant" : "user",
+        kind: "text",
+        content: message.content,
+      },
+    });
+  }
+  for (const outing of unclaimed.values()) {
+    timeline.push({ createdAt: outing.createdAt, message: historyDiaryMessage(outing) });
+  }
+  timeline.sort((left, right) => left.createdAt - right.createdAt);
+  return timeline.map((entry) => entry.message);
 }
 
 function replaceOutingMessage(
@@ -341,6 +395,15 @@ export function ChatPanel() {
       setActiveRequestId(null);
       setStreamingReply("");
     }));
+    void loadChatHistory()
+      .then((history) => {
+        if (disposed) return;
+        const replay = replayHistory(history);
+        if (replay.length > 0) {
+          setMessages((current) => (current.length === 0 ? replay : current));
+        }
+      })
+      .catch(() => {});
     void loadAibbProfile()
       .then((loadedProfile) => {
         if (!disposed) {

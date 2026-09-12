@@ -174,6 +174,19 @@ pub struct ExplorationImage {
     pub data_url: String,
 }
 
+/// A finished outing as returned by `load_chat_history`, so the renderer can
+/// rebuild the same diary card (sources and pictures included) after restart.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct CompletedOuting {
+    pub round_number: u64,
+    pub diary: String,
+    pub sources: Vec<OutingSource>,
+    pub images: Vec<ExplorationImage>,
+    pub elapsed_seconds: u64,
+    pub created_at: i64,
+}
+
 impl WebMode {
     pub fn as_storage_value(self) -> &'static str {
         match self {

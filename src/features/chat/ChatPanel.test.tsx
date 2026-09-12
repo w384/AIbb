@@ -13,6 +13,7 @@ import { ChatPanel } from "./ChatPanel";
 import {
   getBootstrapState,
   loadAibbProfile,
+  loadChatHistory,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
@@ -43,6 +44,7 @@ const unlistenProfile = vi.fn();
 vi.mock("../../lib/tauri", () => ({
   getBootstrapState: vi.fn(),
   loadAibbProfile: vi.fn(),
+  loadChatHistory: vi.fn(),
   openSettingsWindow: vi.fn(),
   submitUserInput: vi.fn(),
   takePendingArchivePaths: vi.fn(async () => []),
@@ -111,6 +113,10 @@ describe("ChatPanel", () => {
       name: "AIbb",
       avatarDataUrl: null,
       version: 0,
+    });
+    vi.mocked(loadChatHistory).mockResolvedValue({
+      messages: [],
+      outings: [],
     });
     mockBootstrap.mockResolvedValue({
       firstRun: false,
@@ -264,6 +270,53 @@ describe("ChatPanel", () => {
     expect(screen.queryByRole("region", { name: "探索结果" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "允许出去玩" })).not.toBeInTheDocument();
     expect(mockSubmit).toHaveBeenCalledTimes(1);
+  });
+
+  it("replays stored messages and outing diary cards when the window reopens", async () => {
+    vi.mocked(loadChatHistory).mockResolvedValue({
+      messages: [
+        { id: "message-1", role: "user", content: "昨天问你去哪里玩", createdAt: 10 },
+        {
+          id: "message-2",
+          role: "assistant",
+          content: "去海边看日落，浪花卷着晚霞。",
+          createdAt: 11,
+        },
+        { id: "message-3", role: "user", content: "那今天呢", createdAt: 12 },
+      ],
+      outings: [
+        {
+          roundNumber: 3,
+          diary: "去海边看日落，浪花卷着晚霞。",
+          sources: [{ title: "海边日落攻略", url: "https://example.com/sunset" }],
+          images: [
+            {
+              title: "海边的日落",
+              pageUrl: "https://example.com/sunset",
+              dataUrl: "data:image/jpeg;base64,AQID",
+            },
+          ],
+          elapsedSeconds: 21,
+          createdAt: 11,
+        },
+      ],
+    });
+    render(<ChatPanel />);
+
+    expect(await screen.findByText("昨天问你去哪里玩")).toBeVisible();
+    expect(screen.getByRole("heading", { name: "第 3 轮回来啦" })).toBeVisible();
+    expect(screen.getByText("思考了 21 秒")).toBeVisible();
+    expect(screen.getByRole("link", { name: "海边日落攻略" })).toHaveAttribute(
+      "href",
+      "https://example.com/sunset",
+    );
+    const gallery = screen.getByLabelText("带回的图片");
+    expect(within(gallery).getByRole("img", { name: "海边的日落" })).toHaveAttribute(
+      "src",
+      "data:image/jpeg;base64,AQID",
+    );
+    expect(screen.getAllByText("去海边看日落，浪花卷着晚霞。")).toHaveLength(1);
+    expect(screen.getByText("那今天呢")).toBeVisible();
   });
 
   it("presents the pictures AIbb brought back as clickable cards", async () => {

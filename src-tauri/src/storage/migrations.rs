@@ -144,6 +144,10 @@ const PERSONA: &str = r#"
 ALTER TABLE app_settings ADD COLUMN persona TEXT NOT NULL DEFAULT '';
 "#;
 
+const OUTING_IMAGES: &str = r#"
+ALTER TABLE explorations ADD COLUMN images_json TEXT;
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
     Migrations::new(vec![
         M::up(INITIAL_SCHEMA),
@@ -153,6 +157,7 @@ pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Erro
         M::up(OUTING_UNIQUENESS),
         M::up(ARCHIVE_FEATURE),
         M::up(PERSONA),
+        M::up(OUTING_IMAGES),
     ])
     .to_latest(connection)
 }

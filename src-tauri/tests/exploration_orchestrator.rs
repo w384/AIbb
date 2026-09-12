@@ -9,7 +9,8 @@ use std::{
 use aibb_desktop_pet_lib::{
     commands::exploration::SettingsExplorationRuntimeFactory,
     domain::{
-        ExplorationResult, MemoryContext, Message, OutingSource, Role, SummaryCandidate, WebMode,
+        ExplorationImage, ExplorationResult, MemoryContext, Message, OutingSource, Role,
+        SummaryCandidate, WebMode,
     },
     error::{AppError, ErrorCode},
     exploration::{
@@ -1943,6 +1944,67 @@ async fn completed_round_numbers_are_unique_at_the_storage_boundary() {
         database.load(second).await.unwrap().unwrap().status,
         ExplorationStatus::Writing
     );
+}
+
+#[tokio::test]
+async fn completed_outings_survive_restart_with_sources_and_pictures() {
+    let temp = tempfile::tempdir().unwrap();
+    let database = Database::open(temp.path().join("aibb.sqlite3")).unwrap();
+    let task_id = Uuid::new_v4();
+    database.create_queued(task_id, Some("海边")).await.unwrap();
+    database
+        .transition(task_id, ExplorationStatus::Choosing)
+        .await
+        .unwrap();
+    database
+        .transition(task_id, ExplorationStatus::PublicSearching)
+        .await
+        .unwrap();
+    database
+        .transition(task_id, ExplorationStatus::Reading)
+        .await
+        .unwrap();
+    database
+        .transition(task_id, ExplorationStatus::Writing)
+        .await
+        .unwrap();
+    let result = ExplorationResult {
+        items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
+        diary: "去海边看日落，浪花卷着晚霞。".into(),
+        sources: vec![OutingSource {
+            title: "海边日落攻略".into(),
+            url: "https://example.com/sunset".into(),
+        }],
+        images: vec![ExplorationImage {
+            title: "海边的日落".into(),
+            page_url: "https://example.com/sunset".into(),
+            data_url: "data:image/webp;base64,AQID".into(),
+        }],
+        round_number: 1,
+        elapsed_seconds: 21,
+        raw_response: VALID_RESULT.into(),
+    };
+    database
+        .complete(task_id, &result, &result.raw_response)
+        .await
+        .unwrap();
+
+    let outings = database.load_completed_outings(10).await.unwrap();
+
+    assert_eq!(outings.len(), 1);
+    let outing = &outings[0];
+    assert_eq!(outing.round_number, 1);
+    assert_eq!(outing.diary, "去海边看日落，浪花卷着晚霞。");
+    assert_eq!(outing.elapsed_seconds, 21);
+    assert_eq!(outing.sources.len(), 1);
+    assert_eq!(outing.sources[0].url, "https://example.com/sunset");
+    assert_eq!(outing.images.len(), 1);
+    assert_eq!(outing.images[0].data_url, "data:image/webp;base64,AQID");
+
+    drop(database);
+    let reopened = Database::open(temp.path().join("aibb.sqlite3")).unwrap();
+    let reloaded = reopened.load_completed_outings(10).await.unwrap();
+    assert_eq!(reloaded[0].images[0].title, "海边的日落");
 }
 
 #[tokio::test]
