@@ -22,7 +22,7 @@ use std::{
 };
 
 use image::{imageops::FilterType, ImageFormat, ImageReader, Limits};
-use tauri::{image::Image, AppHandle, Runtime};
+use tauri::{image::Image, AppHandle, Manager, Runtime};
 
 use crate::error::AppError;
 
@@ -83,17 +83,49 @@ pub fn apply_avatar_icons<R: Runtime>(app: &AppHandle<R>, directory: &Path, webp
             Ok(assets) => match write_avatar_assets(directory, &assets) {
                 Ok((_, ico_path)) => {
                     set_tray_icon(app, Some(&assets.tray_png));
+                    apply_window_icons(app, Some(&assets.tray_png));
                     update_shortcut_icon(Some(&ico_path));
                 }
-                Err(_) => set_tray_icon(app, None),
+                Err(_) => {
+                    set_tray_icon(app, None);
+                    apply_window_icons(app, None);
+                }
             },
-            Err(_) => set_tray_icon(app, None),
+            Err(_) => {
+                set_tray_icon(app, None);
+                apply_window_icons(app, None);
+            }
         },
         None => {
             set_tray_icon(app, None);
+            apply_window_icons(app, None);
             update_shortcut_icon(None);
         }
     }
+}
+
+/// Point every open window's title-bar / taskbar icon at the avatar PNG so
+/// the chat window (and any other window) matches the uploaded picture.
+/// `png: None` restores the embedded default icon.
+#[cfg(desktop)]
+pub fn apply_window_icons<R: Runtime>(app: &AppHandle<R>, png: Option<&[u8]>) {
+    let owned = png.map(|bytes| bytes.to_vec());
+    let app = app.clone();
+    let _ = app.run_on_main_thread({
+        let app = app.clone();
+        move || {
+            let Some(icon) = owned
+                .as_deref()
+                .and_then(|bytes| Image::from_bytes(bytes).ok())
+                .or_else(|| Image::from_bytes(DEFAULT_TRAY_ICON_PNG).ok())
+            else {
+                return;
+            };
+            for (_, window) in app.webview_windows() {
+                let _ = window.set_icon(icon.clone());
+            }
+        }
+    });
 }
 
 /// Apply the avatar only to the tray icon (used at startup, where touching

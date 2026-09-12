@@ -2,7 +2,9 @@ use tauri::{
     AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
-use crate::{app_state::AppState, error::AppError, settings::SettingsService};
+use crate::{
+    app_state::AppState, error::AppError, platform::avatar_icons, settings::SettingsService,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -208,7 +210,7 @@ fn get_or_create_window(
         return Ok(window);
     }
 
-    WebviewWindowBuilder::new(
+    let window = WebviewWindowBuilder::new(
         app,
         label,
         WebviewUrl::App(format!("index.html?window={label}").into()),
@@ -217,7 +219,21 @@ fn get_or_create_window(
     .inner_size(width, height)
     .visible(false)
     .build()
-    .map_err(|error| window_error("create application window", error))
+    .map_err(|error| window_error("create application window", error))?;
+    apply_window_avatar(app);
+    Ok(window)
+}
+
+/// Best-effort: point a freshly created window's title-bar / taskbar icon at
+/// the stored avatar, so the chat and settings windows (created lazily on
+/// first use) match the uploaded picture.
+fn apply_window_avatar(app: &AppHandle) {
+    let Ok(directory) = app.path().app_data_dir() else {
+        return;
+    };
+    let avatar = directory.join("aibb-profile").join("avatar.webp");
+    let bytes = std::fs::read(avatar).ok();
+    avatar_icons::apply_window_icons(app, bytes.as_deref());
 }
 
 fn window_error(action: &str, error: tauri::Error) -> AppError {
