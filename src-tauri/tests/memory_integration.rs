@@ -47,7 +47,7 @@ async fn context_survives_reopening_the_database() {
 }
 
 #[tokio::test]
-async fn context_keeps_the_newest_forty_messages_in_chronological_order() {
+async fn context_keeps_the_newest_eight_messages_in_chronological_order() {
     let directory = tempfile::tempdir().unwrap();
     let repository = MemoryRepository::open(directory.path().join("memory.sqlite3")).unwrap();
 
@@ -68,12 +68,12 @@ async fn context_keeps_the_newest_forty_messages_in_chronological_order() {
         .await
         .unwrap();
 
-    assert_eq!(context.recent_messages.len(), 40);
+    assert_eq!(context.recent_messages.len(), 8);
     assert_eq!(
         context.recent_messages[0].content,
-        "assistant opening\n\nassistant-5"
+        "assistant opening\n\nassistant-37"
     );
-    assert_eq!(context.recent_messages[39].content, "user-44");
+    assert_eq!(context.recent_messages[7].content, "user-44");
     assert_eq!(
         context.last_assistant_paragraph.as_deref(),
         Some("assistant-43")
@@ -166,7 +166,7 @@ async fn saved_summary_marks_but_retains_messages_and_survives_restart() {
     let context = ContextBuilder::new(reopened).build("继续").await.unwrap();
 
     assert_eq!(context.summary.as_deref(), Some("较早对话的持久摘要"));
-    assert_eq!(context.recent_messages.len(), 40);
+    assert_eq!(context.recent_messages.len(), 8);
 }
 
 #[tokio::test]

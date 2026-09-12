@@ -180,6 +180,7 @@ pub struct ExplorationImage {
 #[serde(rename_all = "camelCase")]
 pub struct CompletedOuting {
     pub round_number: u64,
+    pub direction: Option<String>,
     pub diary: String,
     pub sources: Vec<OutingSource>,
     pub images: Vec<ExplorationImage>,

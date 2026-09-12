@@ -109,6 +109,7 @@ export interface HistoryMessage {
 /** A finished outing rebuilt as a diary card after a restart. */
 export interface CompletedOuting {
   roundNumber: number;
+  direction: string | null;
   diary: string;
   sources: OutingSource[];
   images: ExplorationImage[];

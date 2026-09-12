@@ -15,7 +15,9 @@ impl ContextBuilder {
     }
 
     pub async fn build(&self, current_input: impl Into<String>) -> Result<MemoryContext, AppError> {
-        let snapshot = self.repository.context_snapshot(40).await?;
+        // Keep the injected conversation thin (a few recent turns) so the
+        // model leans on its own thinking rather than a wall of history.
+        let snapshot = self.repository.context_snapshot(8).await?;
         let last_assistant_paragraph = snapshot
             .newest_assistant_message
             .and_then(|message| last_non_empty_paragraph(&message.content));

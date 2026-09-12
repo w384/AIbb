@@ -156,6 +156,18 @@ function historyDiaryMessage(outing: CompletedOuting): OutingTimelineMessage {
   };
 }
 
+/** Compact "第 N 轮 · 方向" label for the footprint ledger. */
+function outingLedgerLabel(outing: CompletedOuting): string {
+  const direction = outing.direction?.trim() || "随心漫游";
+  return `第 ${outing.roundNumber} 轮 · ${direction}`;
+}
+
+/** Relative-ish local time label, e.g. "9月12日 22:31". */
+function outingTimeLabel(createdAt: number): string {
+  const date = new Date(createdAt);
+  return `${date.getMonth() + 1}月${date.getDate()}日 ${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+}
+
 /**
  * Rebuilds the stored conversation into one chronological timeline: text
  * messages in place, and finished outings as diary cards. The plain diary
@@ -333,6 +345,7 @@ export function ChatPanel() {
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [error, setError] = useState<AppErrorPayload | null>(null);
   const [outingStats, setOutingStats] = useState<OutingStats | null>(null);
+  const [historyOutings, setHistoryOutings] = useState<CompletedOuting[]>([]);
   const activeRequest = useRef<string | null>(null);
   const knownOutings = useRef(new Set<string>());
   const earlyOutingEvents = useRef(new Map<string, OutingTimelineMessage>());
@@ -373,6 +386,13 @@ export function ChatPanel() {
       void loadOutingStats()
         .then((stats) => {
           if (!disposed) setOutingStats(stats);
+        })
+        .catch(() => {});
+    };
+    const refreshHistoryOutings = () => {
+      void loadChatHistory()
+        .then((history) => {
+          if (!disposed) setHistoryOutings(history.outings);
         })
         .catch(() => {});
     };
@@ -435,6 +455,7 @@ export function ChatPanel() {
         outingDiaryMessage(event.taskId, event.result),
       );
       refreshOutingStats();
+      refreshHistoryOutings();
     }));
     installListener(listenExplorationError((event) => {
       receiveOutingEvent(event.taskId, {
@@ -455,6 +476,7 @@ export function ChatPanel() {
     void loadChatHistory()
       .then((history) => {
         if (disposed) return;
+        setHistoryOutings(history.outings);
         const replay = replayHistory(history);
         if (replay.length > 0) {
           setMessages((current) => (current.length === 0 ? replay : current));
@@ -621,6 +643,20 @@ export function ChatPanel() {
                     </span>
                     <span className="footprint-direction-count">
                       ×{entry.count}
+                    </span>
+                  </li>
+                ))}
+              </ul>
+            )}
+            {historyOutings.length > 0 && (
+              <ul className="footprint-ledger">
+                {historyOutings.map((outing) => (
+                  <li key={outing.createdAt} className="footprint-trip">
+                    <span className="footprint-trip-name">
+                      {outingLedgerLabel(outing)}
+                    </span>
+                    <span className="footprint-trip-time">
+                      {outingTimeLabel(outing.createdAt)}
                     </span>
                   </li>
                 ))}

@@ -523,8 +523,8 @@ impl ExplorationStore for Database {
         let limit = i64::try_from(limit).unwrap_or(i64::MAX);
         let mut statement = connection
             .prepare(
-                "SELECT round_number, diary, sources_json, images_json, elapsed_seconds, \
-                 created_at \
+                "SELECT round_number, user_direction, diary, sources_json, images_json, \
+                 elapsed_seconds, created_at \
                  FROM explorations WHERE status = 'completed' \
                  ORDER BY created_at DESC LIMIT ?1",
             )
@@ -588,17 +588,21 @@ impl ExplorationStore for Database {
 }
 
 fn completed_outing_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CompletedOuting> {
-    let sources = json_list_from_row::<OutingSource>(row, 2)?;
-    let images = json_list_from_row::<ExplorationImage>(row, 3)?;
+    let sources = json_list_from_row::<OutingSource>(row, 3)?;
+    let images = json_list_from_row::<ExplorationImage>(row, 4)?;
+    let direction = row
+        .get::<_, Option<String>>(1)?
+        .filter(|direction| !direction.trim().is_empty());
     Ok(CompletedOuting {
         round_number: u64::try_from(row.get::<_, Option<i64>>(0)?.unwrap_or(0))
             .unwrap_or_default(),
-        diary: row.get::<_, Option<String>>(1)?.unwrap_or_default(),
+        direction,
+        diary: row.get::<_, Option<String>>(2)?.unwrap_or_default(),
         sources,
         images,
-        elapsed_seconds: u64::try_from(row.get::<_, Option<i64>>(4)?.unwrap_or(0))
+        elapsed_seconds: u64::try_from(row.get::<_, Option<i64>>(5)?.unwrap_or(0))
             .unwrap_or_default(),
-        created_at: row.get(5)?,
+        created_at: row.get(6)?,
     })
 }
 
