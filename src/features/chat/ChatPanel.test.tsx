@@ -360,29 +360,6 @@ describe("ChatPanel", () => {
         { direction: "吃遍小吃街", count: 1 },
       ],
     });
-    vi.mocked(loadChatHistory).mockResolvedValue({
-      messages: [],
-      outings: [
-        {
-          roundNumber: 2,
-          direction: "去看海",
-          diary: "浪花真好看",
-          sources: [],
-          images: [],
-          elapsedSeconds: 9,
-          createdAt: 1726100000000,
-        },
-        {
-          roundNumber: 1,
-          direction: null,
-          diary: "随便逛了逛",
-          sources: [],
-          images: [],
-          elapsedSeconds: 7,
-          createdAt: 1726000000000,
-        },
-      ],
-    });
     render(<ChatPanel />);
     await screen.findByRole("textbox", { name: "消息" });
 
@@ -392,9 +369,8 @@ describe("ChatPanel", () => {
     expect(within(footprint).getByText("去看海")).toBeVisible();
     expect(within(footprint).getByText("×2")).toBeVisible();
     expect(within(footprint).getByText("去宇宙的角落")).toBeVisible();
-    // Every trip stacks as its own ledger row, newest first.
-    expect(within(footprint).getByText("第 2 轮 · 去看海")).toBeVisible();
-    expect(within(footprint).getByText("第 1 轮 · 随心漫游")).toBeVisible();
+    // The footprint card clarifies the total only — no per-trip ledger rows.
+    expect(within(footprint).queryByText(/第 \d 轮/)).not.toBeInTheDocument();
   });
 
   it("refreshes outing stats when an outing finishes", async () => {
