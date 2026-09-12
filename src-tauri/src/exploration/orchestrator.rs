@@ -99,7 +99,52 @@ pub fn parse_outing_command(input: &str) -> UserInputIntent {
         };
     }
 
+    // 出发指令（含把决定权交给 AIbb 的）在显式方向之后判断，这样
+    // 「你自己去海边玩」仍优先按显式方向「海边」探索。
+    if is_self_directed_outing_command(input) {
+        return UserInputIntent::Explore { direction: None };
+    }
+
     UserInputIntent::Chat
+}
+
+/// 用户把出门的决定权直接交给 AIbb 的自主出发指令，例如「出发你去逛逛吧」、
+/// 「你自己去玩吧」、「你去逛逛」：没有指定方向，就让 AIbb 自发出去。
+/// 疑问句、表达自己意愿的陈述（「我想自己去逛」）与包含「我们」的邀约
+/// （「我们去逛逛」）不算出发指令，避免误触发。
+fn is_self_directed_outing_command(input: &str) -> bool {
+    if [
+        "我想", "我要", "我打算", "我准备", "我希望", "我陪",
+    ]
+    .iter()
+    .any(|prefix| input.starts_with(prefix))
+    {
+        return false;
+    }
+    if is_question_outing_shell(input)
+        || is_question_or_evaluative_outing_clause(input)
+        || ["哪里", "哪儿", "什么", "怎么", "如何", "吗", "呢"]
+            .iter()
+            .any(|word| input.contains(word))
+    {
+        return false;
+    }
+    const DELEGATE_MARKERS: &[&str] = &["你自己", "你决定", "你定"];
+    if DELEGATE_MARKERS
+        .iter()
+        .any(|marker| input.contains(marker))
+        && ["玩", "逛", "出去", "出门", "走走"]
+            .iter()
+            .any(|word| input.contains(word))
+    {
+        return true;
+    }
+    if (input.starts_with("出发") || input.starts_with("你去") || input.starts_with("去吧"))
+        && (input.contains("逛") || input.contains("玩"))
+    {
+        return true;
+    }
+    input.contains("逛逛") && !input.contains("我们")
 }
 
 fn is_question_outing_shell(input: &str) -> bool {

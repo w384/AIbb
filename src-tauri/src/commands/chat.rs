@@ -777,6 +777,7 @@ fn is_spontaneous_exploration_candidate(message: &str) -> bool {
     const TOPIC_MARKERS: &[&str] = &[
         "什么", "如何", "怎么", "为什么", "为啥", "介绍", "讲讲", "说说", "推荐", "了解",
         "最近", "新闻", "资讯", "趣事", "好玩", "有趣", "发现", "知道", "看看", "怎么样",
+        "逛逛",
     ];
     TOPIC_MARKERS.iter().any(|marker| message.contains(marker))
 }
