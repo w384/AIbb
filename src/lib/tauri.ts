@@ -118,6 +118,16 @@ export const listenExplorationError = (
 export const listenProfileUpdated = (listener: PayloadListener<AibbProfile>) =>
   listenFor("profile://updated", listener);
 
+/** Window focus changes (true = focused) — used to land at the latest
+ * message whenever the chat window is activated again. */
+export function listenChatWindowFocus(
+  listener: (focused: boolean) => void,
+): Promise<UnlistenFn> {
+  return getCurrentWindow().onFocusChanged(({ payload: focused }) =>
+    listener(focused),
+  );
+}
+
 /** Fired by the host after a file drop stashes paths for the chat window. */
 export const listenArchivePending = (listener: PayloadListener<number>) =>
   listenFor("archive://pending", listener);

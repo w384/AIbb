@@ -24,6 +24,7 @@ import {
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenChatWindowFocus,
   listenExplorationComplete,
   listenExplorationError,
   listenExplorationProgress,
@@ -316,6 +317,27 @@ export function ChatPanel() {
   const activeRequest = useRef<string | null>(null);
   const knownOutings = useRef(new Set<string>());
   const earlyOutingEvents = useRef(new Map<string, OutingTimelineMessage>());
+  const conversationRef = useRef<HTMLElement | null>(null);
+  const stickToBottomRef = useRef(true);
+
+  const scrollToLatest = () => {
+    const container = conversationRef.current;
+    if (container) {
+      container.scrollTop = container.scrollHeight;
+    }
+  };
+
+  const handleConversationScroll = () => {
+    const container = conversationRef.current;
+    if (!container) return;
+    const distance =
+      container.scrollHeight - container.scrollTop - container.clientHeight;
+    stickToBottomRef.current = distance < 80;
+  };
+
+  useEffect(() => {
+    if (stickToBottomRef.current) scrollToLatest();
+  });
 
   useEffect(() => {
     let disposed = false;
@@ -328,6 +350,13 @@ export function ChatPanel() {
         })
         .catch(() => {});
     };
+    installListener(
+      listenChatWindowFocus((focused) => {
+        if (!focused || disposed) return;
+        stickToBottomRef.current = true;
+        scrollToLatest();
+      }),
+    );
     installListener(listenProfileUpdated((updatedProfile) => {
       setProfile((current) =>
         updatedProfile.version >= current.version ? updatedProfile : current,
@@ -528,7 +557,12 @@ export function ChatPanel() {
   return (
     <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
       <ChatHeader profile={profile} />
-      <section className="conversation" aria-live="polite">
+      <section
+        className="conversation"
+        aria-live="polite"
+        ref={conversationRef}
+        onScroll={handleConversationScroll}
+      >
         {messages.length === 0 && !activeRequestId && (
           <div className="chat-welcome">
             <span aria-hidden="true">✦</span>

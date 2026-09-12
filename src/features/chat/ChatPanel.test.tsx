@@ -17,6 +17,7 @@ import {
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenChatWindowFocus,
   listenExplorationComplete,
   listenExplorationError,
   listenExplorationProgress,
@@ -33,6 +34,7 @@ let explorationProgressListener: Listener<ExplorationProgressEvent>;
 let explorationCompleteListener: Listener<ExplorationCompleteEvent>;
 let explorationErrorListener: Listener<ExplorationErrorEvent>;
 let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
+let chatWindowFocusListener: (focused: boolean) => void;
 const unlistenDelta = vi.fn();
 const unlistenComplete = vi.fn();
 const unlistenError = vi.fn();
@@ -40,6 +42,7 @@ const unlistenExplorationProgress = vi.fn();
 const unlistenExplorationComplete = vi.fn();
 const unlistenExplorationError = vi.fn();
 const unlistenProfile = vi.fn();
+const unlistenChatWindowFocus = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
   getBootstrapState: vi.fn(),
@@ -77,6 +80,10 @@ vi.mock("../../lib/tauri", () => ({
   listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
     profileListener = listener;
     return unlistenProfile;
+  }),
+  listenChatWindowFocus: vi.fn(async (listener: (focused: boolean) => void) => {
+    chatWindowFocusListener = listener;
+    return unlistenChatWindowFocus;
   }),
 }));
 
@@ -317,6 +324,20 @@ describe("ChatPanel", () => {
     );
     expect(screen.getAllByText("去海边看日落，浪花卷着晚霞。")).toHaveLength(1);
     expect(screen.getByText("那今天呢")).toBeVisible();
+  });
+
+  it("registers a focus listener so reactivating the window lands at the latest message", async () => {
+    render(<ChatPanel />);
+    await screen.findByRole("textbox", { name: "消息" });
+
+    expect(listenChatWindowFocus).toHaveBeenCalledTimes(1);
+    expect(chatWindowFocusListener).toBeTypeOf("function");
+    act(() => {
+      chatWindowFocusListener(true);
+    });
+    act(() => {
+      chatWindowFocusListener(false);
+    });
   });
 
   it("presents the pictures AIbb brought back as clickable cards", async () => {
