@@ -96,6 +96,18 @@ export interface ExplorationResult {
   roundNumber: number;
   elapsedSeconds: number;
   rawResponse: string;
+  /** Model-chosen spots inside the diary that show a source link or picture. */
+  highlights?: DiaryHighlight[];
+}
+
+/** One spot inside the diary where AIbb points the reader at something she
+ * actually saw: `paragraph` is the zero-based paragraph index (paragraphs
+ * are split on blank lines), and at least one of `sourceIndex` / `imageIndex`
+ * is present, referencing `sources` / `images` of the same outing. */
+export interface DiaryHighlight {
+  paragraph: number;
+  sourceIndex?: number | null;
+  imageIndex?: number | null;
 }
 
 /** One stored conversation message replayed when the chat window reopens. */
@@ -154,6 +166,8 @@ export type OutingTimelineMessage =
       images: ExplorationImage[];
       roundNumber: number;
       elapsedSeconds: number;
+      /** Model-chosen spots inside the diary that show a source link or picture. */
+      highlights?: DiaryHighlight[];
     }
   | {
       id: string;
@@ -166,6 +180,12 @@ export type OutingTimelineMessage =
 export interface ExplorationCompleteEvent {
   taskId: string;
   result: ExplorationResult;
+}
+
+/** Live diary chunks while AIbb writes the outing (streamed, live feel). */
+export interface ExplorationDiaryDeltaEvent {
+  taskId: string;
+  delta: string;
 }
 
 export interface ExplorationErrorEvent extends AppErrorPayload {

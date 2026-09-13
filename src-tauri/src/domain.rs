@@ -164,6 +164,32 @@ pub struct ExplorationResult {
     pub round_number: u64,
     pub elapsed_seconds: u64,
     pub raw_response: String,
+    /// The model decides where inside the diary a source link or a picture
+    /// should be shown, so the outing reads like a live share rather than a
+    /// wall of text. Empty when the diary never asked for any.
+    #[serde(default)]
+    pub highlights: Vec<DiaryHighlight>,
+}
+
+/// One spot inside the diary where AIbb points the reader at something she
+/// actually saw: `paragraph` is the zero-based paragraph index (paragraphs
+/// are split on blank lines), and at least one of `sourceIndex` / `imageIndex`
+/// is present, referencing `ExplorationResult.sources` / `.images`.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct DiaryHighlight {
+    pub paragraph: usize,
+    #[serde(default)]
+    pub source_index: Option<usize>,
+    #[serde(default)]
+    pub image_index: Option<usize>,
+}
+
+/// Parsed outing diary: the free-text body plus the model-chosen highlights.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutingDiary {
+    pub text: String,
+    pub highlights: Vec<DiaryHighlight>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

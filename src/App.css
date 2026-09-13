@@ -440,6 +440,64 @@ img.aibb-avatar {
   white-space: pre-wrap;
 }
 
+.outing-diary-paragraph {
+  margin: 0 0 12px;
+  white-space: pre-wrap;
+}
+
+.outing-diary-paragraph:last-child {
+  margin-bottom: 0;
+}
+
+.outing-diary-highlight {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 14px;
+}
+
+.outing-diary-highlight .outing-image {
+  width: 100%;
+}
+
+.outing-diary-highlight .outing-image img {
+  height: 120px;
+}
+
+.outing-source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  padding: 6px 10px;
+  border-radius: 9px;
+  color: #496ba3;
+  background: #edf4ff;
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.outing-source-link:hover {
+  color: #315a99;
+  background: #e2edff;
+  text-decoration: underline;
+}
+
+.outing-diary-live {
+  border: 1px dashed rgb(91 116 167 / 35%);
+}
+
+.outing-diary-live .outing-diary-content {
+  color: #5b6884;
+  animation: outing-live-fade 1.2s ease-in-out infinite alternate;
+}
+
+@keyframes outing-live-fade {
+  from { opacity: 1; }
+  to { opacity: 0.72; }
+}
+
 .outing-sources {
   display: flex;
   flex-wrap: wrap;

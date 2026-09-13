@@ -14,6 +14,7 @@ import type {
   ChatHistory,
   DiscoveredStructure,
   ExplorationCompleteEvent,
+  ExplorationDiaryDeltaEvent,
   ExplorationErrorEvent,
   ExplorationProgressEvent,
   InputDisposition,
@@ -114,6 +115,9 @@ export const listenChatError = (listener: PayloadListener<ChatErrorEvent>) =>
 export const listenExplorationProgress = (
   listener: PayloadListener<ExplorationProgressEvent>,
 ) => listenFor("exploration://progress", listener);
+export const listenExplorationDiaryDelta = (
+  listener: PayloadListener<ExplorationDiaryDeltaEvent>,
+) => listenFor("exploration://diary-delta", listener);
 export const listenExplorationComplete = (
   listener: PayloadListener<ExplorationCompleteEvent>,
 ) => listenFor("exploration://complete", listener);

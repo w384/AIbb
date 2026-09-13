@@ -12,11 +12,11 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        CompletedOuting, ExplorationImage, ExplorationResult, MemoryContext, OutingSource,
-        OutingStats, SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
+        CompletedOuting, ExplorationImage, ExplorationResult, MemoryContext, OutingDiary,
+        OutingSource, OutingStats, SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
     },
     error::{sanitize_sensitive_text, AppError, ErrorCode},
-    llm::{ChatMessage, ChatRequest, LlmTransport, NativeWebOutcome, NativeWebRequest},
+    llm::{ChatMessage, ChatRequest, DeltaSink, LlmTransport, NativeWebOutcome, NativeWebRequest},
     memory::{ContextBuilder, MemoryRepository},
     prompts::{
         build_exploration_prompt, ModelPrompt, EXPLORATION_SYSTEM_INSTRUCTION,
@@ -34,6 +34,7 @@ use super::{
 };
 
 pub const EXPLORATION_PROGRESS_EVENT: &str = "exploration://progress";
+pub const EXPLORATION_DIARY_DELTA_EVENT: &str = "exploration://diary-delta";
 pub const EXPLORATION_COMPLETE_EVENT: &str = "exploration://complete";
 pub const EXPLORATION_ERROR_EVENT: &str = "exploration://error";
 
@@ -511,6 +512,12 @@ pub enum ExplorationEvent {
         task_id: Uuid,
         status: ExplorationStatus,
     },
+    /// Streaming diary chunks while AIbb writes it, so the outing feels live.
+    DiaryDelta {
+        #[serde(rename = "taskId")]
+        task_id: Uuid,
+        delta: String,
+    },
     Complete {
         #[serde(rename = "taskId")]
         task_id: Uuid,
@@ -528,6 +535,7 @@ impl ExplorationEvent {
     pub fn task_id(&self) -> Uuid {
         match self {
             Self::Progress { task_id, .. }
+            | Self::DiaryDelta { task_id, .. }
             | Self::Complete { task_id, .. }
             | Self::Error { task_id, .. } => *task_id,
         }
@@ -536,6 +544,7 @@ impl ExplorationEvent {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Progress { .. } => EXPLORATION_PROGRESS_EVENT,
+            Self::DiaryDelta { .. } => EXPLORATION_DIARY_DELTA_EVENT,
             Self::Complete { .. } => EXPLORATION_COMPLETE_EVENT,
             Self::Error { .. } => EXPLORATION_ERROR_EVENT,
         }
@@ -545,6 +554,43 @@ impl ExplorationEvent {
 #[async_trait]
 pub trait ExplorationEventSink: Send + Sync {
     async fn emit(&self, event: ExplorationEvent) -> Result<(), AppError>;
+}
+
+/// Accumulates the streamed diary while forwarding every chunk to the
+/// renderer as a `DiaryDelta` event, so the outing reads like a live write.
+struct DiaryStreamSink {
+    events: Arc<dyn ExplorationEventSink>,
+    task_id: Uuid,
+    text: Arc<Mutex<String>>,
+}
+
+impl DiaryStreamSink {
+    fn new(events: Arc<dyn ExplorationEventSink>, task_id: Uuid) -> Self {
+        Self {
+            events,
+            task_id,
+            text: Arc::new(Mutex::new(String::new())),
+        }
+    }
+
+    fn take(&self) -> String {
+        std::mem::take(&mut *self.text.lock().unwrap())
+    }
+}
+
+#[async_trait]
+impl DeltaSink for DiaryStreamSink {
+    async fn send(&self, delta: &str) -> Result<(), AppError> {
+        self.text.lock().unwrap().push_str(delta);
+        let _ = self
+            .events
+            .emit(ExplorationEvent::DiaryDelta {
+                task_id: self.task_id,
+                delta: delta.to_string(),
+            })
+            .await;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Default)]
@@ -919,38 +965,33 @@ impl ExplorationOrchestrator {
         ensure_not_cancelled(&cancellation)?;
         result.round_number = self.store.completed_outings().await?.saturating_add(1);
         result.elapsed_seconds = started_at.elapsed().as_secs();
-        let diary_raw = runtime
-            .llm
-            .complete(
-                build_outing_diary_request(
-                    &result,
-                    &web_material,
-                    request.direction.as_deref(),
-                    &runtime.persona,
-                ),
-                cancellation.clone(),
-            )
-            .await?;
-        let mut diary = parse_outing_diary(&diary_raw);
-        if diary.is_err() {
-            // One retry with the exact failure shown, mirroring the
-            // exploration-contract correction; a transient JSON slip must
-            // not waste a whole outing.
-            let safe_diary_raw = sanitize_raw(&diary_raw, &runtime.credential);
-            let corrected = runtime
-                .llm
-                .complete(
-                    build_diary_correction_request(&safe_diary_raw, &runtime.persona),
-                    cancellation.clone(),
-                )
-                .await?;
-            diary = parse_outing_diary(&corrected);
-        }
-        result.diary = diary?;
+        let diary = self.write_diary(
+            task_id,
+            &result,
+            &web_material,
+            request.direction.as_deref(),
+            &runtime,
+            cancellation.clone(),
+        ).await?;
+        result.diary = diary.text;
         result.sources = web_material
             .pages
             .iter()
             .map(|page| page.source.clone())
+            .collect();
+        // Keep only highlights that point at something that actually exists;
+        // the model only knows the counts, not the sanitised arrays.
+        result.highlights = diary
+            .highlights
+            .into_iter()
+            .filter(|highlight| {
+                highlight
+                    .source_index
+                    .is_some_and(|index| index < result.sources.len())
+                    || highlight
+                        .image_index
+                        .is_some_and(|index| index < result.images.len())
+            })
             .collect();
         result.elapsed_seconds = started_at.elapsed().as_secs();
         let result = sanitize_result(result, &runtime.credential);
@@ -967,6 +1008,43 @@ impl ExplorationOrchestrator {
             .await;
         let _ = self.notifier.exploration_complete(task_id).await;
         Ok(result)
+    }
+
+    /// Streams the outing diary to the renderer chunk by chunk (live feel),
+    /// retrying once with the exact failure shown when the model slips on the
+    /// JSON envelope.
+    async fn write_diary(
+        &self,
+        task_id: Uuid,
+        result: &ExplorationResult,
+        web_material: &WebMaterial,
+        direction: Option<&str>,
+        runtime: &ExplorationTaskRuntime,
+        cancellation: CancellationToken,
+    ) -> Result<OutingDiary, AppError> {
+        let first = DiaryStreamSink::new(self.events.clone(), task_id);
+        runtime
+            .llm
+            .stream_chat(
+                build_outing_diary_request(result, web_material, direction, &runtime.persona),
+                &first,
+                cancellation.clone(),
+            )
+            .await?;
+        let mut diary = parse_outing_diary(&first.take());
+        if diary.is_err() {
+            let retry = DiaryStreamSink::new(self.events.clone(), task_id);
+            runtime
+                .llm
+                .stream_chat(
+                    build_diary_correction_request(&sanitize_raw(&first.take(), &runtime.credential), &runtime.persona),
+                    &retry,
+                    cancellation.clone(),
+                )
+                .await?;
+            diary = parse_outing_diary(&retry.take());
+        }
+        diary
     }
 
     async fn public_exploration(

@@ -36,6 +36,7 @@ pub fn parse_exploration_result(raw: &str) -> Result<ExplorationResult, Contract
         round_number: 0,
         elapsed_seconds: 0,
         raw_response: raw.to_string(),
+        highlights: Vec::new(),
     })
 }
 
@@ -89,7 +90,7 @@ mod tests {
     #[test]
     fn diary_parser_requires_a_nonempty_json_diary() {
         assert_eq!(
-            parse_outing_diary(r#"{"diary":"第二轮回来啦"}"#).unwrap(),
+            parse_outing_diary(r#"{"diary":"第二轮回来啦"}"#).unwrap().text,
             "第二轮回来啦"
         );
         assert!(parse_outing_diary(r#"{"diary":" "}"#).is_err());

@@ -1,4 +1,5 @@
 import {
+  Fragment,
   useEffect,
   useRef,
   useState,
@@ -28,6 +29,7 @@ import {
   listenChatError,
   listenChatWindowFocus,
   listenExplorationComplete,
+  listenExplorationDiaryDelta,
   listenExplorationError,
   listenExplorationProgress,
   listenProfileUpdated,
@@ -139,6 +141,7 @@ function outingDiaryMessage(
     images: result.images,
     roundNumber: result.roundNumber,
     elapsedSeconds: result.elapsedSeconds,
+    highlights: result.highlights ?? [],
   };
 }
 
@@ -270,6 +273,61 @@ function AssistantIdentity({ profile }: { profile: AibbProfile }) {
   );
 }
 
+function DiaryBody({
+  message,
+}: {
+  message: Extract<OutingTimelineMessage, { kind: "outingDiary" }>;
+}) {
+  const paragraphs = message.content
+    .split(/\n\s*\n/)
+    .map((paragraph) => paragraph.trim())
+    .filter(Boolean);
+  const highlights = message.highlights ?? [];
+  return (
+    <>
+      {paragraphs.map((paragraph, index) => {
+        const highlight = highlights.find((spot) => spot.paragraph === index);
+        return (
+          <Fragment key={index}>
+            <p className="outing-diary-paragraph">{paragraph}</p>
+            {highlight && (
+              <div className="outing-diary-highlight" aria-label="分享的内容">
+                {highlight.imageIndex != null &&
+                  message.images[highlight.imageIndex] && (
+                    <a
+                      className="outing-image"
+                      href={message.images[highlight.imageIndex].pageUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      title={message.images[highlight.imageIndex].title}
+                    >
+                      <img
+                        src={message.images[highlight.imageIndex].dataUrl}
+                        alt={message.images[highlight.imageIndex].title}
+                        loading="lazy"
+                      />
+                    </a>
+                  )}
+                {highlight.sourceIndex != null &&
+                  message.sources[highlight.sourceIndex] && (
+                    <a
+                      className="outing-source-link"
+                      href={message.sources[highlight.sourceIndex].url}
+                      target="_blank"
+                      rel="noreferrer"
+                    >
+                      🔗 {message.sources[highlight.sourceIndex].title}
+                    </a>
+                  )}
+              </div>
+            )}
+          </Fragment>
+        );
+      })}
+    </>
+  );
+}
+
 function MessageBody({
   message,
   profile,
@@ -284,7 +342,7 @@ function MessageBody({
           <h2>第 {message.roundNumber} 轮回来啦</h2>
           <span>思考了 {message.elapsedSeconds} 秒</span>
         </div>
-        <p className="outing-diary-content">{message.content}</p>
+        <DiaryBody message={message} />
         {message.images.length > 0 && (
           <div className="outing-images" aria-label="带回的图片">
             {message.images.map((image) => (
@@ -343,6 +401,7 @@ export function ChatPanel() {
   const [activeRequestId, setActiveRequestId] = useState<string | null>(null);
   const [error, setError] = useState<AppErrorPayload | null>(null);
   const [outingStats, setOutingStats] = useState<OutingStats | null>(null);
+  const [liveDiaries, setLiveDiaries] = useState<Record<string, string>>({});
   const activeRequest = useRef<string | null>(null);
   const knownOutings = useRef(new Set<string>());
   const earlyOutingEvents = useRef(new Map<string, OutingTimelineMessage>());
@@ -439,7 +498,17 @@ export function ChatPanel() {
         content: `${explorationStatusLabel(event.status)}～`,
       });
     }));
+    installListener(listenExplorationDiaryDelta((event) => {
+      setLiveDiaries((current) => ({
+        ...current,
+        [event.taskId]: (current[event.taskId] ?? "") + event.delta,
+      }));
+    }));
     installListener(listenExplorationComplete((event) => {
+      setLiveDiaries((current) => {
+        const { [event.taskId]: _dropped, ...rest } = current;
+        return rest;
+      });
       receiveOutingEvent(
         event.taskId,
         outingDiaryMessage(event.taskId, event.result),
@@ -447,6 +516,10 @@ export function ChatPanel() {
       refreshOutingStats();
     }));
     installListener(listenExplorationError((event) => {
+      setLiveDiaries((current) => {
+        const { [event.taskId]: _dropped, ...rest } = current;
+        return rest;
+      });
       receiveOutingEvent(event.taskId, {
         id: `outing-${event.taskId}`,
         role: "assistant",
@@ -638,6 +711,20 @@ export function ChatPanel() {
             )}
           </section>
         )}
+        {Object.entries(liveDiaries).map(([taskId, text]) => (
+          <article key={`live-${taskId}`} className="message-row assistant">
+            <AssistantIdentity profile={profile} />
+            <div className="message outing-diary outing-diary-live">
+              <div className="outing-diary-heading">
+                <h2>✍️ {profile.name} 正在写日记…</h2>
+                <span>直播中</span>
+              </div>
+              <p className="outing-diary-content" data-testid={`live-diary-${taskId}`}>
+                {text || <><span className="thinking-dot" />起笔了…</>}
+              </p>
+            </div>
+          </article>
+        ))}
         {activeRequestId && (
           <article className="message-row assistant">
             <AssistantIdentity profile={profile} />

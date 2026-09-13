@@ -5,6 +5,7 @@ import type {
   ChatDeltaEvent,
   ChatErrorEvent,
   ExplorationCompleteEvent,
+  ExplorationDiaryDeltaEvent,
   ExplorationErrorEvent,
   ExplorationProgressEvent,
   InputDisposition,
@@ -20,6 +21,7 @@ import {
   listenChatError,
   listenChatWindowFocus,
   listenExplorationComplete,
+  listenExplorationDiaryDelta,
   listenExplorationError,
   listenExplorationProgress,
   listenProfileUpdated,
@@ -34,6 +36,7 @@ let errorListener: Listener<ChatErrorEvent>;
 let explorationProgressListener: Listener<ExplorationProgressEvent>;
 let explorationCompleteListener: Listener<ExplorationCompleteEvent>;
 let explorationErrorListener: Listener<ExplorationErrorEvent>;
+let explorationDiaryDeltaListener: Listener<ExplorationDiaryDeltaEvent>;
 let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
 let chatWindowFocusListener: (focused: boolean) => void;
 const unlistenDelta = vi.fn();
@@ -42,6 +45,7 @@ const unlistenError = vi.fn();
 const unlistenExplorationProgress = vi.fn();
 const unlistenExplorationComplete = vi.fn();
 const unlistenExplorationError = vi.fn();
+const unlistenExplorationDiaryDelta = vi.fn();
 const unlistenProfile = vi.fn();
 const unlistenChatWindowFocus = vi.fn();
 
@@ -74,6 +78,10 @@ vi.mock("../../lib/tauri", () => ({
   listenExplorationComplete: vi.fn(async (listener: Listener<ExplorationCompleteEvent>) => {
     explorationCompleteListener = listener;
     return unlistenExplorationComplete;
+  }),
+  listenExplorationDiaryDelta: vi.fn(async (listener: Listener<ExplorationDiaryDeltaEvent>) => {
+    explorationDiaryDeltaListener = listener;
+    return unlistenExplorationDiaryDelta;
   }),
   listenExplorationError: vi.fn(async (listener: Listener<ExplorationErrorEvent>) => {
     explorationErrorListener = listener;
@@ -479,6 +487,25 @@ describe("ChatPanel", () => {
 
     expect(screen.getByText("AIbb 正在阅读～")).toBeVisible();
     expect(screen.queryByText("AIbb 出发，去玩～")).not.toBeInTheDocument();
+  });
+
+  it("streams the diary live and replaces it with the final card", async () => {
+    mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-live" });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(listenExplorationDiaryDelta).toHaveBeenCalledTimes(1));
+    fireEvent.change(editor, { target: { value: "去海里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await screen.findByText("AIbb 出发，去玩～");
+
+    act(() => explorationDiaryDeltaListener({ taskId: "task-live", delta: "海边的风很软，" }));
+    act(() => explorationDiaryDeltaListener({ taskId: "task-live", delta: "浪花一路追着我。" }));
+    expect(screen.getByText("海边的风很软，浪花一路追着我。")).toBeVisible();
+    expect(screen.getByText(/正在写日记/)).toBeVisible();
+
+    act(() => explorationCompleteListener({ taskId: "task-live", result: diaryResult }));
+    expect(screen.queryByText(/正在写日记/)).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
   });
 
   it("keeps a completion that arrives before the exploration-start response", async () => {

@@ -241,6 +241,9 @@ enum CompleteStep {
 enum LlmCall {
     Native(String),
     Complete(Vec<aibb_desktop_pet_lib::llm::ChatMessage>),
+    /// The outing diary is streamed now (live feel); the fake treats it like
+    /// a complete call but delivers the text through the sink.
+    Stream(Vec<aibb_desktop_pet_lib::llm::ChatMessage>),
 }
 
 #[derive(Default)]
@@ -278,11 +281,40 @@ impl FakeLlm {
 impl LlmTransport for FakeLlm {
     async fn stream_chat(
         &self,
-        _request: ChatRequest,
-        _sink: &dyn DeltaSink,
-        _cancellation: CancellationToken,
+        request: ChatRequest,
+        sink: &dyn DeltaSink,
+        cancellation: CancellationToken,
     ) -> Result<(), AppError> {
-        unreachable!("exploration never streams chat")
+        if cancellation.is_cancelled() {
+            return Err(AppError::from_code(ErrorCode::Cancelled));
+        }
+        self.calls
+            .lock()
+            .unwrap()
+            .push(LlmCall::Stream(request.messages.clone()));
+        let step = self.complete.lock().unwrap().pop_front().unwrap();
+        match step {
+            CompleteStep::Text(value) => {
+                sink.send(&value).await?;
+                Ok(())
+            }
+            CompleteStep::Error(code) => Err(AppError::from_code(code)),
+            CompleteStep::Wait {
+                entered,
+                release,
+                response,
+            } => {
+                entered.notify_one();
+                release.notified().await;
+                sink.send(&response).await?;
+                Ok(())
+            }
+            CompleteStep::ExpectMessages { messages, response } => {
+                assert_eq!(request.messages, messages);
+                sink.send(&response).await?;
+                Ok(())
+            }
+        }
     }
 
     async fn complete(
@@ -866,7 +898,7 @@ async fn no_direction_is_left_for_the_model_without_topic_candidates() {
         .iter()
         .flat_map(|call| match call {
             LlmCall::Native(text) => vec![text.clone()],
-            LlmCall::Complete(messages) => messages
+            LlmCall::Complete(messages) | LlmCall::Stream(messages) => messages
                 .iter()
                 .map(|message| message.content.clone())
                 .collect(),
@@ -1084,7 +1116,9 @@ async fn an_invalid_first_diary_is_retried_once_before_the_outing_fails() {
         .calls()
         .into_iter()
         .filter_map(|call| match call {
-            LlmCall::Complete(messages) if messages[0].content.contains("出游日记") => {
+            LlmCall::Complete(messages) | LlmCall::Stream(messages)
+                if messages[0].content.contains("出游日记") =>
+            {
                 Some(messages)
             }
             _ => None,
@@ -1385,7 +1419,7 @@ async fn invalid_envelope_correction_repeats_only_the_thin_system_schema() {
 
     let calls = harness.llm.calls();
     let correction = match &calls[2] {
-        LlmCall::Complete(messages) => messages,
+        LlmCall::Complete(messages) | LlmCall::Stream(messages) => messages,
         _ => panic!("correction must use a non-streaming completion"),
     };
     assert_eq!(correction.len(), 2);
@@ -1428,7 +1462,7 @@ async fn success_atomically_persists_results_safe_raw_and_assistant_memory() {
         .calls()
         .into_iter()
         .find_map(|call| match call {
-            LlmCall::Complete(messages) => Some(messages),
+            LlmCall::Complete(messages) | LlmCall::Stream(messages) => Some(messages),
             LlmCall::Native(_) => None,
         })
         .unwrap();
@@ -1490,7 +1524,7 @@ async fn outing_direction_is_redacted_before_storage_or_model_context() {
         .iter()
         .flat_map(|call| match call {
             LlmCall::Native(text) => vec![text.clone()],
-            LlmCall::Complete(messages) => messages
+            LlmCall::Complete(messages) | LlmCall::Stream(messages) => messages
                 .iter()
                 .map(|message| message.content.clone())
                 .collect(),
@@ -1607,7 +1641,7 @@ async fn summary_is_requested_once_and_failure_does_not_cancel_success() {
     );
     assert_eq!(success.llm.calls().len(), 3);
     let summary_call = match &success.llm.calls()[2] {
-        LlmCall::Complete(messages) => messages
+        LlmCall::Complete(messages) | LlmCall::Stream(messages) => messages
             .iter()
             .map(|message| message.content.as_str())
             .collect::<Vec<_>>()
@@ -1962,6 +1996,7 @@ async fn completed_round_numbers_are_unique_at_the_storage_boundary() {
         round_number: 1,
         elapsed_seconds: 1,
         raw_response: VALID_RESULT.into(),
+        highlights: Vec::new(),
     };
 
     for task_id in [first, second] {
@@ -2039,6 +2074,7 @@ async fn completed_outings_survive_restart_with_sources_and_pictures() {
         round_number: 1,
         elapsed_seconds: 21,
         raw_response: VALID_RESULT.into(),
+        highlights: Vec::new(),
     };
     database
         .complete(task_id, &result, &result.raw_response)
@@ -2087,6 +2123,7 @@ async fn outing_stats_count_trips_and_group_by_direction() {
             round_number: round,
             elapsed_seconds: 9,
             raw_response: VALID_RESULT.into(),
+            highlights: Vec::new(),
         };
         database.complete(task_id, &result, &result.raw_response).await.unwrap();
     }
@@ -2119,6 +2156,7 @@ async fn outing_stats_count_trips_and_group_by_direction() {
         round_number: 4,
         elapsed_seconds: 11,
         raw_response: VALID_RESULT.into(),
+        highlights: Vec::new(),
     };
     database
         .complete(roam, &roam_result, &roam_result.raw_response)
