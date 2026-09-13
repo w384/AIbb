@@ -324,6 +324,28 @@ describe("ChatPanel", () => {
     expect(mockSubmit).toHaveBeenCalledTimes(1);
   });
 
+  it("turns bare URLs in chat text into openable links and reports open failures", async () => {
+    vi.mocked(loadChatHistory).mockResolvedValue({
+      messages: [
+        {
+          id: "message-url",
+          role: "assistant",
+          content: "你看这个链接 https://example.com/abc，挺有意思的。",
+          createdAt: 10,
+        },
+      ],
+      outings: [],
+    });
+    render(<ChatPanel />);
+
+    const urlLink = await screen.findByRole("link", { name: "https://example.com/abc" });
+    expect(urlLink).toHaveAttribute("href", "https://example.com/abc");
+
+    mockOpenExternal.mockRejectedValueOnce(new Error("boom"));
+    fireEvent.click(urlLink);
+    expect(await screen.findByTestId("link-error-toast")).toHaveTextContent("打开链接失败");
+  });
+
   it("replays stored messages and outing diary cards when the window reopens", async () => {
     vi.mocked(loadChatHistory).mockResolvedValue({
       messages: [

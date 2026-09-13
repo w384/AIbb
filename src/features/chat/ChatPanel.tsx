@@ -131,6 +131,59 @@ function explorationStatusLabel(status: ExplorationStatus): string {
   return labels[status];
 }
 
+/**
+ * Splits free text into plain segments and bare http(s) URLs so the renderer
+ * can turn the URLs into clickable links (the model often mentions a link in
+ * plain chat text). Trailing punctuation is kept out of the URL.
+ */
+function linkify(text: string): Array<{ text: string; url: string | null }> {
+  const parts: Array<{ text: string; url: string | null }> = [];
+  const pattern = /https?:\/\/[^\s<>"'`，。！？；：、）】》」…]+/g;
+  let last = 0;
+  for (const match of text.matchAll(pattern)) {
+    const index = match.index ?? 0;
+    if (index > last) {
+      parts.push({ text: text.slice(last, index), url: null });
+    }
+    parts.push({ text: match[0], url: match[0] });
+    last = index + match[0].length;
+  }
+  if (last < text.length) {
+    parts.push({ text: text.slice(last), url: null });
+  }
+  return parts;
+}
+
+/** Plain chat text with any bare URLs rendered as openable links. */
+function MessageText({
+  content,
+  onLinkContextMenu,
+  onOpenError,
+}: {
+  content: string;
+  onLinkContextMenu: (event: MouseEvent, url: string) => void;
+  onOpenError: (message: string) => void;
+}) {
+  return (
+    <p className="message">
+      {linkify(content).map((part, index) =>
+        part.url ? (
+          <ExternalLink
+            key={index}
+            href={part.url}
+            onLinkContextMenu={onLinkContextMenu}
+            onOpenError={onOpenError}
+          >
+            {part.text}
+          </ExternalLink>
+        ) : (
+          <Fragment key={index}>{part.text}</Fragment>
+        ),
+      )}
+    </p>
+  );
+}
+
 function outingDiaryMessage(
   taskId: string,
   result: ExplorationResult,
@@ -280,9 +333,11 @@ function AssistantIdentity({ profile }: { profile: AibbProfile }) {
 function DiaryBody({
   message,
   onLinkContextMenu,
+  onOpenError,
 }: {
   message: Extract<OutingTimelineMessage, { kind: "outingDiary" }>;
   onLinkContextMenu: (event: MouseEvent, url: string) => void;
+  onOpenError: (message: string) => void;
 }) {
   const paragraphs = message.content
     .split(/\n\s*\n/)
@@ -305,6 +360,7 @@ function DiaryBody({
                       href={message.images[highlight.imageIndex].pageUrl}
                       title={message.images[highlight.imageIndex].title}
                       onLinkContextMenu={onLinkContextMenu}
+                      onOpenError={onOpenError}
                     >
                       <img
                         src={message.images[highlight.imageIndex].dataUrl}
@@ -319,6 +375,7 @@ function DiaryBody({
                       className="outing-source-link"
                       href={message.sources[highlight.sourceIndex].url}
                       onLinkContextMenu={onLinkContextMenu}
+                      onOpenError={onOpenError}
                     >
                       🔗 {message.sources[highlight.sourceIndex].title}
                     </ExternalLink>
@@ -336,10 +393,12 @@ function MessageBody({
   message,
   profile,
   onLinkContextMenu,
+  onOpenError,
 }: {
   message: TimelineMessage;
   profile: AibbProfile;
   onLinkContextMenu: (event: MouseEvent, url: string) => void;
+  onOpenError: (message: string) => void;
 }) {
   if (message.kind === "outingDiary") {
     return (
@@ -348,7 +407,7 @@ function MessageBody({
           <h2>第 {message.roundNumber} 轮回来啦</h2>
           <span>思考了 {message.elapsedSeconds} 秒</span>
         </div>
-        <DiaryBody message={message} onLinkContextMenu={onLinkContextMenu} />
+        <DiaryBody message={message} onLinkContextMenu={onLinkContextMenu} onOpenError={onOpenError} />
         {message.images.length > 0 && (
           <div className="outing-images" aria-label="带回的图片">
             {message.images.map((image) => (
@@ -358,6 +417,7 @@ function MessageBody({
                 key={image.dataUrl}
                 title={image.title}
                 onLinkContextMenu={onLinkContextMenu}
+                onOpenError={onOpenError}
               >
                 <img src={image.dataUrl} alt={image.title} loading="lazy" />
               </ExternalLink>
@@ -371,6 +431,7 @@ function MessageBody({
                 <ExternalLink
                   href={source.url}
                   onLinkContextMenu={onLinkContextMenu}
+                  onOpenError={onOpenError}
                 >
                   {source.title}
                 </ExternalLink>
@@ -397,7 +458,13 @@ function MessageBody({
   if (message.kind === "outingError") {
     return <p className="message outing-error" role="alert">{message.content}</p>;
   }
-  return <p className="message">{message.content}</p>;
+  return (
+    <MessageText
+      content={message.content}
+      onLinkContextMenu={onLinkContextMenu}
+      onOpenError={onOpenError}
+    />
+  );
 }
 
 export function ChatPanel() {
@@ -414,6 +481,13 @@ export function ChatPanel() {
     Record<string, { query: string | null; pages: Array<{ title: string; url: string }> }>
   >({});
   const [linkMenu, setLinkMenu] = useState<{ x: number; y: number; url: string } | null>(null);
+  const [linkError, setLinkError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!linkError) return;
+    const timer = window.setTimeout(() => setLinkError(null), 3500);
+    return () => window.clearTimeout(timer);
+  }, [linkError]);
 
   const openLinkMenu = (event: MouseEvent, url: string) => {
     setLinkMenu({ x: event.clientX, y: event.clientY, url });
@@ -763,7 +837,12 @@ export function ChatPanel() {
         {messages.map((message) => (
           <article key={message.id} className={`message-row ${message.role}`}>
             {message.role === "assistant" ? <AssistantIdentity profile={profile} /> : <span className="message-author">你</span>}
-            <MessageBody message={message} profile={profile} onLinkContextMenu={openLinkMenu} />
+            <MessageBody
+              message={message}
+              profile={profile}
+              onLinkContextMenu={openLinkMenu}
+              onOpenError={setLinkError}
+            />
           </article>
         ))}
         {outingStats && outingStats.totalOutings > 0 && (
@@ -868,6 +947,11 @@ export function ChatPanel() {
           发送
         </button>
       </form>
+      {linkError && (
+        <p className="link-error-toast" role="alert" data-testid="link-error-toast">
+          打开链接失败：{linkError}
+        </p>
+      )}
       {linkMenu && (
         <div
           className="link-context-menu"

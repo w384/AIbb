@@ -12,12 +12,14 @@ export function ExternalLink({
   title,
   children,
   onLinkContextMenu,
+  onOpenError,
 }: {
   href: string;
   className?: string;
   title?: string;
   children: ReactNode;
   onLinkContextMenu?: (event: MouseEvent, url: string) => void;
+  onOpenError?: (message: string) => void;
 }) {
   return (
     <a
@@ -26,7 +28,7 @@ export function ExternalLink({
       title={title}
       onClick={(event) => {
         event.preventDefault();
-        void openExternal(href);
+        void openExternal(href).catch((error) => onOpenError?.(String(error)));
       }}
       onContextMenu={(event) => {
         event.preventDefault();
