@@ -29,8 +29,8 @@ use crate::{
 };
 
 use super::{
-    build_contract_correction, build_outing_diary_request, parse_exploration_result,
-    parse_outing_diary,
+    build_contract_correction, build_diary_correction_request, build_outing_diary_request,
+    parse_exploration_result, parse_outing_diary,
 };
 
 pub const EXPLORATION_PROGRESS_EVENT: &str = "exploration://progress";
@@ -931,7 +931,22 @@ impl ExplorationOrchestrator {
                 cancellation.clone(),
             )
             .await?;
-        result.diary = parse_outing_diary(&diary_raw)?;
+        let mut diary = parse_outing_diary(&diary_raw);
+        if diary.is_err() {
+            // One retry with the exact failure shown, mirroring the
+            // exploration-contract correction; a transient JSON slip must
+            // not waste a whole outing.
+            let safe_diary_raw = sanitize_raw(&diary_raw, &runtime.credential);
+            let corrected = runtime
+                .llm
+                .complete(
+                    build_diary_correction_request(&safe_diary_raw, &runtime.persona),
+                    cancellation.clone(),
+                )
+                .await?;
+            diary = parse_outing_diary(&corrected);
+        }
+        result.diary = diary?;
         result.sources = web_material
             .pages
             .iter()

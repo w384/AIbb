@@ -37,9 +37,31 @@ pub fn build_outing_diary_request(
     }
 }
 
+/// Retry prompt shown to the model when its first diary was not a valid JSON
+/// object: keep the instruction, point at the exact failure, demand the bare
+/// envelope again.
+pub fn build_diary_correction_request(raw: &str, persona: &str) -> ChatRequest {
+    let mut system = OUTING_DIARY_INSTRUCTION.to_string();
+    let persona = persona.trim();
+    if !persona.is_empty() {
+        system.push_str("\n\n【性格设定】");
+        system.push_str(persona);
+    }
+    let user = format!(
+        "上次响应不是可解析的约定 JSON 对象，请只输出 {{\"diary\":\"...\"}}：\n\n{raw}"
+    );
+    ChatRequest {
+        messages: vec![
+            ChatMessage::new("system", system),
+            ChatMessage::user(user),
+        ],
+    }
+}
+
 pub fn parse_outing_diary(raw: &str) -> Result<String, AppError> {
+    let payload = extract_json_payload(raw).ok_or_else(invalid_diary_error)?;
     let envelope: DiaryEnvelope =
-        serde_json::from_str(raw.trim()).map_err(|_| invalid_diary_error())?;
+        serde_json::from_str(payload).map_err(|_| invalid_diary_error())?;
     let diary = envelope.diary.trim().to_string();
     if diary.is_empty() {
         return Err(invalid_diary_error());
@@ -47,8 +69,27 @@ pub fn parse_outing_diary(raw: &str) -> Result<String, AppError> {
     Ok(diary)
 }
 
+/// Same tolerance the exploration contract uses: a leading explanation and a
+/// markdown fence around the JSON must not fail the whole outing, and extra
+/// stylistic fields (a title, a theme…) carry no meaning — only `diary` is
+/// read.
+fn extract_json_payload(raw: &str) -> Option<&str> {
+    let trimmed = raw.trim();
+    if !trimmed.contains("```") {
+        return Some(trimmed);
+    }
+
+    let opening_marker = trimmed
+        .find("```json")
+        .or_else(|| trimmed.find("```"))?;
+    let after_marker = &trimmed[opening_marker..];
+    let opening_end = after_marker.find('\n')?;
+    let body = &after_marker[opening_end + 1..];
+    let closing = body.rfind("```")?;
+    Some(body[..closing].trim())
+}
+
 #[derive(Deserialize)]
-#[serde(deny_unknown_fields)]
 struct DiaryEnvelope {
     diary: String,
 }
@@ -136,13 +177,26 @@ mod tests {
     }
 
     #[test]
-    fn diary_parser_rejects_malformed_or_model_supplied_source_fields() {
-        for raw in [
-            "not json",
-            r#"{"diary":"有效","sources":[{"url":"https://model.invalid"}]}"#,
-            r#"{"diary":1}"#,
-        ] {
+    fn diary_parser_rejects_only_actually_malformed_diaries() {
+        for raw in ["not json", r#"{"diary":1}"#, r#"{"diary":" "}"#, "{}"] {
             assert!(parse_outing_diary(raw).is_err(), "raw: {raw}");
+        }
+    }
+
+    #[test]
+    fn diary_parser_accepts_fences_leading_text_and_extra_stylistic_fields() {
+        for (raw, expected) in [
+            (r#"{"diary":"第二轮回来啦"}"#, "第二轮回来啦"),
+            (
+                "我的日记写好了：\n```json\n{\"diary\":\"第二轮回来啦\"}\n```",
+                "第二轮回来啦",
+            ),
+            (
+                r#"{"diary":" 第二轮回来啦 ","sources":[{"url":"https://model.invalid"}],"title":"标题"}"#,
+                "第二轮回来啦",
+            ),
+        ] {
+            assert_eq!(parse_outing_diary(raw).unwrap(), expected, "raw: {raw}");
         }
     }
 }

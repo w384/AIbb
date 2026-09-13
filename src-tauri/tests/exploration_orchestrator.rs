@@ -1063,6 +1063,43 @@ async fn successful_outing_persists_a_diary_with_four_items_safe_sources_round_a
 }
 
 #[tokio::test]
+async fn an_invalid_first_diary_is_retried_once_before_the_outing_fails() {
+    let harness = Harness::new(
+        WebMode::Auto,
+        FakeLlm::scripted(
+            vec![NativeStep::Completed(VALID_RESULT.into())],
+            vec![
+                CompleteStep::Text("这次日记我写在正文里了，忘了包 JSON。".into()),
+                CompleteStep::Text(VALID_DIARY.into()),
+                CompleteStep::Text(VALID_DIARY.into()),
+            ],
+        ),
+    );
+
+    let result = harness.orchestrator.run(request(None)).await.unwrap();
+
+    assert_eq!(result.diary, "我带着四样见闻回来啦。");
+    let diary_calls = harness
+        .llm
+        .calls()
+        .into_iter()
+        .filter_map(|call| match call {
+            LlmCall::Complete(messages) if messages[0].content.contains("出游日记") => {
+                Some(messages)
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(diary_calls.len(), 2, "the invalid diary must be retried once");
+    assert!(
+        diary_calls[1][1]
+            .content
+            .contains("上次响应不是可解析的约定 JSON 对象"),
+        "the retry must point at the exact failure"
+    );
+}
+
+#[tokio::test]
 async fn native_outing_without_sources_falls_back_to_validated_public_search_in_auto_mode() {
     let harness = Harness::new(
         WebMode::Auto,
