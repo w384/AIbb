@@ -1,0 +1,53 @@
+name: build-macos
+
+on:
+  workflow_dispatch:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build the macOS bundle
+        run: pnpm tauri build
+
+      - name: Upload the .app bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: aibb-macos-app
+          path: src-tauri/target/release/bundle/macos/*.app
+
+      - name: Upload the .dmg disk image
+        uses: actions/upload-artifact@v4
+        with:
+          name: aibb-macos-dmg
+          path: src-tauri/target/release/bundle/dmg/*.dmg
+
+      - name: Publish the release on tags
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            src-tauri/target/release/bundle/dmg/*.dmg
