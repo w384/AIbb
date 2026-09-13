@@ -29,7 +29,7 @@ pub struct WorkArea {
 
 pub fn profile_window_title(label: &str, profile_name: &str) -> String {
     match label {
-        "chat" => "AIbb".to_string(),
+        "chat" => format!("{profile_name}AIbb"),
         "settings" => format!("{profile_name} Settings"),
         _ => profile_name.to_string(),
     }
@@ -259,7 +259,7 @@ mod tests {
     #[test]
     fn native_window_titles_use_the_saved_profile_name() {
         assert_eq!(profile_window_title("pet", "小团子"), "小团子");
-        assert_eq!(profile_window_title("chat", "小团子"), "AIbb");
+        assert_eq!(profile_window_title("chat", "小团子"), "小团子AIbb");
         assert_eq!(
             profile_window_title("settings", "小团子"),
             "小团子 Settings"
