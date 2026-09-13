@@ -305,7 +305,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![
                 ("pet", "小团子"),
-                ("chat", "小团子 Chat"),
+                ("chat", "AIbb"),
                 ("settings", "小团子 Settings")
             ]
         );

@@ -1,5 +1,6 @@
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    window::Color, AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow,
+    WebviewWindowBuilder,
 };
 
 use crate::{
@@ -28,7 +29,7 @@ pub struct WorkArea {
 
 pub fn profile_window_title(label: &str, profile_name: &str) -> String {
     match label {
-        "chat" => format!("{profile_name} Chat"),
+        "chat" => "AIbb".to_string(),
         "settings" => format!("{profile_name} Settings"),
         _ => profile_name.to_string(),
     }
@@ -80,9 +81,17 @@ pub fn open_settings(app: &AppHandle, profile_name: &str) -> Result<(), AppError
 }
 
 pub fn start_pet_drag(window: &WebviewWindow) -> Result<(), AppError> {
-    window
-        .start_dragging()
-        .map_err(|error| window_error("start pet drag", error))
+    // A transparent window is composited by DWM as a layered window while the
+    // system drags it, so the WebView content lags behind and leaves a visible
+    // “dragging a picture” trail. Switching to an opaque background for the
+    // duration of the drag makes Windows move a normal solid window instead;
+    // transparency is restored afterwards. On Windows `start_dragging` blocks
+    // until the drag ends, which is exactly the span we need to cover.
+    let _ = window.set_background_color(Some(Color(255, 255, 255, 255)));
+    let drag_result = window.start_dragging();
+    let restore_result = window.set_background_color(Some(Color(0, 0, 0, 0)));
+    drag_result.map_err(|error| window_error("start pet drag", error))?;
+    restore_result.map_err(|error| window_error("restore pet drag background", error))
 }
 
 pub fn save_pet_position(state: &AppState, x: i32, y: i32) -> Result<(), AppError> {
@@ -250,7 +259,7 @@ mod tests {
     #[test]
     fn native_window_titles_use_the_saved_profile_name() {
         assert_eq!(profile_window_title("pet", "小团子"), "小团子");
-        assert_eq!(profile_window_title("chat", "小团子"), "小团子 Chat");
+        assert_eq!(profile_window_title("chat", "小团子"), "AIbb");
         assert_eq!(
             profile_window_title("settings", "小团子"),
             "小团子 Settings"
