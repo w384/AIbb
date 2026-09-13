@@ -489,9 +489,26 @@ export function ChatPanel() {
     return () => window.clearTimeout(timer);
   }, [linkError]);
 
-  const openLinkMenu = (event: MouseEvent, url: string) => {
+  const openLinkMenu = (event: { clientX: number; clientY: number }, url: string) => {
     setLinkMenu({ x: event.clientX, y: event.clientY, url });
   };
+
+  // Capture-phase fallback: on some WebView2 builds React's synthetic
+  // onContextMenu never fires, so grab the event at the document root before
+  // the native menu can appear and route it to the same link menu.
+  const openLinkMenuRef = useRef(openLinkMenu);
+  openLinkMenuRef.current = openLinkMenu;
+  useEffect(() => {
+    const onContextMenu = (event: globalThis.MouseEvent) => {
+      const target = event.target as HTMLElement | null;
+      const link = target?.closest?.("a[href]");
+      if (!link) return;
+      event.preventDefault();
+      openLinkMenuRef.current(event, link.getAttribute("href") ?? "");
+    };
+    document.addEventListener("contextmenu", onContextMenu, true);
+    return () => document.removeEventListener("contextmenu", onContextMenu, true);
+  }, []);
 
   const copyText = async (text: string) => {
     try {

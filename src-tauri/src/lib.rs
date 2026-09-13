@@ -249,6 +249,7 @@ mod tests {
                 "allow-load-chat-history",
                 "allow-outing-stats",
                 "allow-open-settings-window",
+                "allow-open-external-url",
                 "allow-submit-user-input",
                 "allow-archive-files",
                 "allow-take-pending-archive-paths",
