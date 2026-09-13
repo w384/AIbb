@@ -408,7 +408,7 @@ describe("ChatPanel", () => {
     });
   });
 
-  it("shows the outing trip badge and the footprint collection", async () => {
+  it("shows the outing trip badge and no footprint collection", async () => {
     vi.mocked(loadOutingStats).mockResolvedValue({
       totalOutings: 4,
       totalDirections: 3,
@@ -423,13 +423,7 @@ describe("ChatPanel", () => {
     await screen.findByRole("textbox", { name: "消息" });
 
     expect(screen.getByText("🐾 ×4")).toBeVisible();
-    const footprint = screen.getByLabelText("出游足迹");
-    expect(within(footprint).getByText(/已经和 AIbb 一起出去玩/)).toBeVisible();
-    expect(within(footprint).getByText("去看海")).toBeVisible();
-    expect(within(footprint).getByText("×2")).toBeVisible();
-    expect(within(footprint).getByText("去宇宙的角落")).toBeVisible();
-    // The footprint card clarifies the total only — no per-trip ledger rows.
-    expect(within(footprint).queryByText(/第 \d 轮/)).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("出游足迹")).not.toBeInTheDocument();
   });
 
   it("refreshes outing stats when an outing finishes", async () => {

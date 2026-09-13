@@ -287,66 +287,6 @@ img.aibb-avatar {
   line-height: 1.6;
 }
 
-.outing-footprint {
-  width: min(100%, 320px);
-  margin: 14px auto auto;
-  padding: 16px 20px 18px;
-  border: 1px solid rgb(93 119 174 / 13%);
-  border-radius: 22px;
-  background: rgb(255 255 255 / 72%);
-  box-shadow: 0 14px 30px rgb(51 82 139 / 9%);
-}
-
-.outing-footprint h3 {
-  margin: 0 0 8px;
-  color: #24304c;
-  font-size: 15px;
-}
-
-.footprint-summary {
-  margin: 0;
-  color: #6e7890;
-  font-size: 13px;
-  line-height: 1.6;
-}
-
-.footprint-summary strong {
-  color: #4a6fa5;
-  font-size: 15px;
-}
-
-.footprint-directions {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin: 14px 0 0;
-  padding: 0;
-  list-style: none;
-}
-
-.footprint-direction {
-  display: inline-flex;
-  align-items: baseline;
-  gap: 5px;
-  max-width: 100%;
-  padding: 5px 10px;
-  border-radius: 999px;
-  color: #4b5874;
-  background: rgb(244 247 253 / 92%);
-  font-size: 12px;
-}
-
-.footprint-direction-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.footprint-direction-count {
-  color: #8a6a1f;
-  font-weight: 700;
-}
-
 .message-row {
   display: flex;
   max-width: 84%;

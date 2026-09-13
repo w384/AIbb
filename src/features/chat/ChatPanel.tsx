@@ -876,30 +876,6 @@ export function ChatPanel() {
             />
           </article>
         ))}
-        {outingStats && outingStats.totalOutings > 0 && (
-          <section className="outing-footprint" aria-label="出游足迹">
-            <h3>🐾 出游足迹</h3>
-            <p className="footprint-summary">
-              已经和 {profile.name} 一起出去玩{" "}
-              <strong>{outingStats.totalOutings}</strong> 次，探索过{" "}
-              <strong>{outingStats.totalDirections}</strong> 个方向
-            </p>
-            {outingStats.directions.length > 0 && (
-              <ul className="footprint-directions">
-                {outingStats.directions.map((entry) => (
-                  <li key={entry.direction} className="footprint-direction">
-                    <span className="footprint-direction-name">
-                      {entry.direction}
-                    </span>
-                    <span className="footprint-direction-count">
-                      ×{entry.count}
-                    </span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
-        )}
         {Object.entries(outingProcess).map(([taskId, process]) =>
           process.query || process.pages.length > 0 ? (
             <article key={`process-${taskId}`} className="message-row assistant">
