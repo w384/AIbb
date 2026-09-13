@@ -445,6 +445,26 @@ img.aibb-avatar {
   white-space: pre-wrap;
 }
 
+.outing-diary-section-title {
+  margin: 20px 0 8px;
+  padding-left: 10px;
+  border-left: 4px solid #7ba7e0;
+  color: #2b4a7a;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.4;
+  letter-spacing: 0.5px;
+}
+
+.outing-diary-section-title::before {
+  content: "✦ ";
+  color: #d98e3d;
+}
+
+.outing-diary-section-title:first-child {
+  margin-top: 0;
+}
+
 .outing-diary-paragraph:last-child {
   margin-bottom: 0;
 }

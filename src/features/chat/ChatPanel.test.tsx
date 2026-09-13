@@ -560,6 +560,30 @@ describe("ChatPanel", () => {
     expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
   });
 
+  it("renders the four diary sections with distinct titles", async () => {
+    mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-sections" });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "去山里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await screen.findByText("AIbb 出发，去玩～");
+    act(() =>
+      explorationCompleteListener({
+        taskId: "task-sections",
+        result: {
+          ...diaryResult,
+          diary:
+            "## 路上的风景\n山里的雾慢慢散开。\n\n## 看图有感\n那张照片里的晚霞太美了。\n\n## 总结\n风景和照片都在说同一件事。",
+        },
+      }),
+    );
+
+    expect(await screen.findByRole("heading", { name: "路上的风景" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "看图有感" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "总结" })).toBeVisible();
+    expect(screen.getByText("山里的雾慢慢散开。")).toBeVisible();
+  });
+
   it("opens links in the system browser and shows a copy-only menu on right click", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {

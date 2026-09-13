@@ -330,6 +330,16 @@ function AssistantIdentity({ profile }: { profile: AibbProfile }) {
   );
 }
 
+/** Splits one diary block into an optional `## section title` and its body. */
+function parseDiaryBlock(block: string): { title: string | null; body: string } {
+  const lines = block.split("\n");
+  const titleMatch = lines[0]?.trim().match(/^##\s+(.+)$/);
+  if (titleMatch) {
+    return { title: titleMatch[1].trim(), body: lines.slice(1).join("\n").trim() };
+  }
+  return { title: null, body: block.trim() };
+}
+
 function DiaryBody({
   message,
   onLinkContextMenu,
@@ -346,11 +356,15 @@ function DiaryBody({
   const highlights = message.highlights ?? [];
   return (
     <>
-      {paragraphs.map((paragraph, index) => {
+      {paragraphs.map((block, index) => {
+        const part = parseDiaryBlock(block);
         const highlight = highlights.find((spot) => spot.paragraph === index);
         return (
           <Fragment key={index}>
-            <p className="outing-diary-paragraph">{paragraph}</p>
+            {part.title && (
+              <h3 className="outing-diary-section-title">{part.title}</h3>
+            )}
+            {part.body && <p className="outing-diary-paragraph">{part.body}</p>}
             {highlight && (
               <div className="outing-diary-highlight" aria-label="分享的内容">
                 {highlight.imageIndex != null &&
@@ -926,9 +940,32 @@ export function ChatPanel() {
                 <h2>✍️ {profile.name} 正在写日记…</h2>
                 <span>直播中</span>
               </div>
-              <p className="outing-diary-content" data-testid={`live-diary-${taskId}`}>
-                {text || <><span className="thinking-dot" />起笔了…</>}
-              </p>
+              <div className="outing-diary-content" data-testid={`live-diary-${taskId}`}>
+                {text ? (
+                  text
+                    .split(/\n\s*\n/)
+                    .map((block) => block.trim())
+                    .filter(Boolean)
+                    .map((block, index) => {
+                      const part = parseDiaryBlock(block);
+                      return (
+                        <Fragment key={index}>
+                          {part.title && (
+                            <h3 className="outing-diary-section-title">{part.title}</h3>
+                          )}
+                          {part.body && (
+                            <p className="outing-diary-paragraph">{part.body}</p>
+                          )}
+                        </Fragment>
+                      );
+                    })
+                ) : (
+                  <>
+                    <span className="thinking-dot" />
+                    起笔了…
+                  </>
+                )}
+              </div>
             </div>
           </article>
         ))}
