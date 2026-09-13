@@ -179,6 +179,9 @@ describe("ChatPanel", () => {
     expect(await screen.findByText(/喜欢出去玩耍的快乐 AIbb/)).toBeVisible();
     expect(screen.getByText(/platform.deepseek.com/)).toBeVisible();
     expect(screen.getByText(/不会上传到任何服务器/)).toBeVisible();
+    expect(screen.getByText("三步连上我")).toBeVisible();
+    expect(screen.getByText(/长按拖动/)).toBeVisible();
+    expect(screen.getByText(/去海边玩/)).toBeVisible();
     fireEvent.click(screen.getByRole("button", { name: "打开 API 设置" }));
     expect(openSettingsWindow).toHaveBeenCalledTimes(1);
     expect(mockSubmit).not.toHaveBeenCalled();

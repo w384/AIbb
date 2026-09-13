@@ -9,6 +9,15 @@
   box-sizing: border-box;
 }
 
+/* Never let the webview drag images or links out of the window: dropping a
+   picture onto the desktop would create a file the user did not ask for. */
+img,
+a,
+button {
+  -webkit-user-drag: none;
+  user-select: none;
+}
+
 html,
 body,
 #root {
@@ -819,6 +828,18 @@ img.aibb-avatar {
   box-shadow: 0 18px 40px rgb(51 82 139 / 12%);
 }
 
+.first-run-subhead {
+  margin: 20px 0 8px;
+  color: #2b4a7a;
+  font-size: 14px;
+  font-weight: 700;
+  text-align: left;
+}
+
+.first-run-subhead:first-of-type {
+  margin-top: 4px;
+}
+
 .first-run-card h2 {
   margin: 14px 0 7px;
   color: #24304c;
@@ -833,7 +854,7 @@ img.aibb-avatar {
 }
 
 .first-run-steps {
-  margin: 0 0 16px;
+  margin: 0 0 4px;
   padding: 14px 18px 14px 34px;
   border-radius: 14px;
   background: rgb(63 151 236 / 6%);
@@ -846,6 +867,17 @@ img.aibb-avatar {
 .first-run-steps a {
   color: #3f97ec;
   text-decoration: underline;
+}
+
+.first-run-tips {
+  margin: 0 0 16px;
+  padding: 12px 16px 12px 30px;
+  border-radius: 14px;
+  background: rgb(255 214 138 / 12%);
+  color: #4a5670;
+  font-size: 13px;
+  line-height: 1.9;
+  text-align: left;
 }
 
 .first-run-privacy {
@@ -1156,6 +1188,13 @@ img.aibb-avatar {
   color: #98a0b2;
   font-size: 12px;
   text-align: center;
+}
+
+.settings-footer .settings-copyright {
+  display: block;
+  margin-top: 4px;
+  color: #b0b7c6;
+  font-size: 11px;
 }
 
 .text-button {

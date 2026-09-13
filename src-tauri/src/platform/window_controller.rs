@@ -91,7 +91,83 @@ pub fn start_pet_drag(window: &WebviewWindow) -> Result<(), AppError> {
     let drag_result = window.start_dragging();
     let restore_result = window.set_background_color(Some(Color(0, 0, 0, 0)));
     drag_result.map_err(|error| window_error("start pet drag", error))?;
-    restore_result.map_err(|error| window_error("restore pet drag background", error))
+    restore_result.map_err(|error| window_error("restore pet drag background", error))?;
+    snap_pet_to_work_area_edge(window)
+}
+
+/// After a drag ends, snap the pet to the nearest edge of its current
+/// monitor's work area (with a small margin) and always clamp it fully on
+/// screen, so the floating pet never ends up half off the display.
+fn snap_pet_to_work_area_edge(window: &WebviewWindow) -> Result<(), AppError> {
+    let position = window
+        .outer_position()
+        .map_err(|error| window_error("read pet drag position", error))?;
+    let size = window
+        .outer_size()
+        .map_err(|error| window_error("read pet drag size", error))?;
+    let Some(monitor) = window
+        .current_monitor()
+        .map_err(|error| window_error("read pet monitor", error))?
+    else {
+        return Ok(());
+    };
+    let work_area = monitor.work_area();
+    let before = Position {
+        x: position.x,
+        y: position.y,
+    };
+    let after = snap_position(
+        before,
+        Size {
+            width: i32::try_from(size.width).unwrap_or(48),
+            height: i32::try_from(size.height).unwrap_or(48),
+        },
+        WorkArea {
+            x: work_area.position.x,
+            y: work_area.position.y,
+            width: i32::try_from(work_area.size.width).unwrap_or(i32::MAX),
+            height: i32::try_from(work_area.size.height).unwrap_or(i32::MAX),
+        },
+    );
+    if after != before {
+        window
+            .set_position(PhysicalPosition::new(after.x, after.y))
+            .map_err(|error| window_error("snap pet window position", error))?;
+    }
+    Ok(())
+}
+
+/// Snaps a position to the nearest work-area edge when it ends within
+/// SNAP_MARGIN of one, and otherwise just clamps it fully inside the work
+/// area.
+pub fn snap_position(position: Position, size: Size, work_area: WorkArea) -> Position {
+    const SNAP_MARGIN: i32 = 16;
+    let max_x = work_area
+        .x
+        .saturating_add(work_area.width)
+        .saturating_sub(size.width)
+        .max(work_area.x);
+    let max_y = work_area
+        .y
+        .saturating_add(work_area.height)
+        .saturating_sub(size.height)
+        .max(work_area.y);
+
+    let x = if position.x <= work_area.x + SNAP_MARGIN {
+        work_area.x
+    } else if position.x >= max_x - SNAP_MARGIN {
+        max_x
+    } else {
+        position.x.clamp(work_area.x, max_x)
+    };
+    let y = if position.y <= work_area.y + SNAP_MARGIN {
+        work_area.y
+    } else if position.y >= max_y - SNAP_MARGIN {
+        max_y
+    } else {
+        position.y.clamp(work_area.y, max_y)
+    };
+    Position { x, y }
 }
 
 pub fn save_pet_position(state: &AppState, x: i32, y: i32) -> Result<(), AppError> {
@@ -263,6 +339,58 @@ mod tests {
         assert_eq!(
             profile_window_title("settings", "小团子"),
             "小团子 Settings"
+        );
+    }
+
+    #[test]
+    fn snaps_to_the_edge_when_the_drag_ends_close_to_it() {
+        let area = WorkArea {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let size = Size {
+            width: 48,
+            height: 48,
+        };
+        assert_eq!(
+            snap_position(Position { x: 12, y: 400 }, size, area),
+            Position { x: 0, y: 400 }
+        );
+        assert_eq!(
+            snap_position(Position { x: 400, y: 1040 }, size, area),
+            Position { x: 400, y: 1032 }
+        );
+        assert_eq!(
+            snap_position(Position { x: 1900, y: 500 }, size, area),
+            Position { x: 1872, y: 500 }
+        );
+        assert_eq!(
+            snap_position(Position { x: 8, y: 8 }, size, area),
+            Position { x: 0, y: 0 }
+        );
+    }
+
+    #[test]
+    fn keeps_a_free_position_and_clamps_when_it_would_leave_the_screen() {
+        let area = WorkArea {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        let size = Size {
+            width: 48,
+            height: 48,
+        };
+        assert_eq!(
+            snap_position(Position { x: 600, y: 400 }, size, area),
+            Position { x: 600, y: 400 }
+        );
+        assert_eq!(
+            snap_position(Position { x: 2100, y: -60 }, size, area),
+            Position { x: 1872, y: 0 }
         );
     }
 

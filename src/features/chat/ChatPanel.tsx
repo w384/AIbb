@@ -819,18 +819,32 @@ export function ChatPanel() {
     return (
       <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
         <ChatHeader profile={profile} totalOutings={outingStats?.totalOutings ?? null} />
-        <section className="first-run-card">
+        <section className="first-run-card" aria-label="快速上手">
           <span className="first-run-sparkle" aria-hidden="true">✦</span>
           <h2>你好呀！</h2>
           <p>{FIRST_RUN_GREETING}</p>
+          <h3 className="first-run-subhead">三步连上我</h3>
           <ol className="first-run-steps">
             <li>
-              在 <ExternalLink href="https://platform.deepseek.com" onLinkContextMenu={openLinkMenu}>platform.deepseek.com</ExternalLink>{" "}
+              <strong>准备 Key</strong>：去{" "}
+              <ExternalLink href="https://platform.deepseek.com" onLinkContextMenu={openLinkMenu}>platform.deepseek.com</ExternalLink>{" "}
               注册并创建 API Key（也支持其他兼容 OpenAI 的服务）。
             </li>
-            <li>点下面的按钮打开设置，粘贴 Key，API 地址与模型会自动填好。</li>
-            <li>点「保存并测试」，提示连接成功后就可以聊天和「去玩」啦。</li>
+            <li>
+              <strong>粘贴并测试</strong>：点下面的按钮打开设置，粘贴 Key——API 地址和模型会自动填好，再点「保存并测试」。
+            </li>
+            <li>
+              <strong>开始玩</strong>：提示连接成功后，回到对话窗跟我说「出去玩」就行。
+            </li>
           </ol>
+          <h3 className="first-run-subhead">怎么跟我玩</h3>
+          <ul className="first-run-tips">
+            <li><strong>点我</strong>：打开对话窗，随时聊天。</li>
+            <li><strong>长按拖动</strong>：移动悬浮窗，靠近屏幕边缘会自动吸附。</li>
+            <li><strong>右键我</strong>：打开设置。</li>
+            <li><strong>拖文件到我身上</strong>：归档进本地资料库。</li>
+            <li>跟我说「去海边玩」「出去逛逛」，我会自己去网上找新鲜事带回来。</li>
+          </ul>
           <p className="first-run-privacy">
             🔒 API Key 只保存在这台电脑的系统凭据里，对话与记忆也不会上传到任何服务器。
           </p>
