@@ -905,9 +905,9 @@ async fn no_direction_is_left_for_the_model_without_topic_candidates() {
         })
         .collect::<Vec<_>>()
         .join("\n");
-    assert!(all_prompt_text.contains("自由决定此刻想探索什么"));
-    for forbidden in ["科技", "旅行", "新闻", "主题候选", "为什么选择"] {
-        assert!(!all_prompt_text.contains(forbidden), "{forbidden}");
+    assert!(all_prompt_text.contains("自由选择查询内容"));
+    for wanted in ["最新进展", "考古学奇闻", "天文学", "海洋生物", "避开烂大街"] {
+        assert!(all_prompt_text.contains(wanted), "{wanted}");
     }
     assert_eq!(
         harness.web.shared.searches.lock().unwrap().as_slice(),

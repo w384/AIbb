@@ -1484,7 +1484,7 @@ fn parse_query_envelope(raw: &str) -> Result<Vec<String>, AppError> {
 
 fn build_query_request(context: &MemoryContext) -> ChatRequest {
     let choice = if context.current_input.trim().is_empty() {
-        "用户没有指定方向，由你自由选择查询内容。"
+        "用户没有指定方向，由你自由选择查询内容。优先选新奇、少见、有信息增量的角度：某个领域的最新进展、考古学奇闻、天文学、海洋生物、前沿科技、冷门自然现象或小众趣闻等，避开烂大街的常识话题，让 AIbb 每次带回来的都是用户没听过的新鲜事。"
     } else {
         "查询内容围绕用户给出的方向。"
     };
@@ -1587,4 +1587,38 @@ fn state_error() -> AppError {
         "exploration_state_unavailable",
         "The exploration task state is unavailable.",
     )
+}
+
+#[cfg(test)]
+mod query_request_tests {
+    use super::build_query_request;
+    use crate::domain::MemoryContext;
+
+    fn context_with(input: &str) -> MemoryContext {
+        MemoryContext {
+            current_input: input.to_string(),
+            last_assistant_paragraph: None,
+            recent_messages: Vec::new(),
+            summary: None,
+        }
+    }
+
+    #[test]
+    fn undirected_queries_prefer_novel_angles_over_popular_topics() {
+        let request = build_query_request(&context_with(""));
+        let user = &request.messages[1].content;
+        assert!(user.contains("自由选择查询内容"));
+        assert!(user.contains("最新进展"));
+        assert!(user.contains("考古学奇闻"));
+        assert!(user.contains("天文学"));
+        assert!(user.contains("海洋生物"));
+        assert!(user.contains("避开烂大街"));
+    }
+
+    #[test]
+    fn directed_queries_stay_on_the_users_direction() {
+        let request = build_query_request(&context_with("去海边玩"));
+        assert!(request.messages[1].content.contains("围绕用户给出的方向"));
+        assert!(request.messages[1].content.contains("去海边玩"));
+    }
 }
