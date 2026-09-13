@@ -7,7 +7,9 @@ import type {
   ExplorationCompleteEvent,
   ExplorationDiaryDeltaEvent,
   ExplorationErrorEvent,
+  ExplorationPageReadEvent,
   ExplorationProgressEvent,
+  ExplorationQueryEvent,
   InputDisposition,
 } from "../../contracts";
 import { ChatPanel } from "./ChatPanel";
@@ -23,7 +25,9 @@ import {
   listenExplorationComplete,
   listenExplorationDiaryDelta,
   listenExplorationError,
+  listenExplorationPageRead,
   listenExplorationProgress,
+  listenExplorationQuery,
   listenProfileUpdated,
   openSettingsWindow,
   submitUserInput,
@@ -37,6 +41,8 @@ let explorationProgressListener: Listener<ExplorationProgressEvent>;
 let explorationCompleteListener: Listener<ExplorationCompleteEvent>;
 let explorationErrorListener: Listener<ExplorationErrorEvent>;
 let explorationDiaryDeltaListener: Listener<ExplorationDiaryDeltaEvent>;
+let explorationQueryListener: Listener<ExplorationQueryEvent>;
+let explorationPageReadListener: Listener<ExplorationPageReadEvent>;
 let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
 let chatWindowFocusListener: (focused: boolean) => void;
 const unlistenDelta = vi.fn();
@@ -46,6 +52,8 @@ const unlistenExplorationProgress = vi.fn();
 const unlistenExplorationComplete = vi.fn();
 const unlistenExplorationError = vi.fn();
 const unlistenExplorationDiaryDelta = vi.fn();
+const unlistenExplorationQuery = vi.fn();
+const unlistenExplorationPageRead = vi.fn();
 const unlistenProfile = vi.fn();
 const unlistenChatWindowFocus = vi.fn();
 
@@ -82,6 +90,14 @@ vi.mock("../../lib/tauri", () => ({
   listenExplorationDiaryDelta: vi.fn(async (listener: Listener<ExplorationDiaryDeltaEvent>) => {
     explorationDiaryDeltaListener = listener;
     return unlistenExplorationDiaryDelta;
+  }),
+  listenExplorationQuery: vi.fn(async (listener: Listener<ExplorationQueryEvent>) => {
+    explorationQueryListener = listener;
+    return unlistenExplorationQuery;
+  }),
+  listenExplorationPageRead: vi.fn(async (listener: Listener<ExplorationPageReadEvent>) => {
+    explorationPageReadListener = listener;
+    return unlistenExplorationPageRead;
   }),
   listenExplorationError: vi.fn(async (listener: Listener<ExplorationErrorEvent>) => {
     explorationErrorListener = listener;
@@ -487,6 +503,38 @@ describe("ChatPanel", () => {
 
     expect(screen.getByText("AIbb 正在阅读～")).toBeVisible();
     expect(screen.queryByText("AIbb 出发，去玩～")).not.toBeInTheDocument();
+  });
+
+  it("shows the chosen query and read pages while exploring, then clears them", async () => {
+    mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-proc" });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(listenExplorationQuery).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(listenExplorationPageRead).toHaveBeenCalledTimes(1));
+    fireEvent.change(editor, { target: { value: "去海里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await screen.findByText("AIbb 出发，去玩～");
+
+    act(() => explorationQueryListener({ taskId: "task-proc", query: "深海发光生物" }));
+    expect(screen.getByText("在搜：深海发光生物")).toBeVisible();
+
+    act(() => explorationPageReadListener({
+      taskId: "task-proc",
+      title: "深海为什么会有光",
+      url: "https://example.com/deep-sea",
+    }));
+    act(() => explorationPageReadListener({
+      taskId: "task-proc",
+      title: "会发光的鲸落",
+      url: "https://example.com/whale-fall",
+    }));
+    expect(screen.getByText("深海为什么会有光")).toBeVisible();
+    expect(screen.getByText("会发光的鲸落")).toBeVisible();
+
+    act(() => explorationCompleteListener({ taskId: "task-proc", result: diaryResult }));
+    expect(screen.queryByText("在搜：深海发光生物")).not.toBeInTheDocument();
+    expect(screen.queryByText("会发光的鲸落")).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
   });
 
   it("streams the diary live and replaces it with the final card", async () => {

@@ -12,5 +12,6 @@ pub use orchestrator::{
     ExplorationRequest, ExplorationRuntimeFactory, ExplorationStatus, ExplorationStore,
     ExplorationTaskCredential, ExplorationTaskRuntime, NoopEventSink, NoopNotifier, Notifier,
     PublicWebFactory, PublicWebRuntime, UserInputIntent, EXPLORATION_COMPLETE_EVENT,
-    EXPLORATION_DIARY_DELTA_EVENT, EXPLORATION_ERROR_EVENT, EXPLORATION_PROGRESS_EVENT,
+    EXPLORATION_DIARY_DELTA_EVENT, EXPLORATION_ERROR_EVENT, EXPLORATION_PAGE_READ_EVENT,
+    EXPLORATION_PROGRESS_EVENT, EXPLORATION_QUERY_EVENT,
 };

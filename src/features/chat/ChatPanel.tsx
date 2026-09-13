@@ -31,7 +31,9 @@ import {
   listenExplorationComplete,
   listenExplorationDiaryDelta,
   listenExplorationError,
+  listenExplorationPageRead,
   listenExplorationProgress,
+  listenExplorationQuery,
   listenProfileUpdated,
   openSettingsWindow,
   submitUserInput,
@@ -402,6 +404,9 @@ export function ChatPanel() {
   const [error, setError] = useState<AppErrorPayload | null>(null);
   const [outingStats, setOutingStats] = useState<OutingStats | null>(null);
   const [liveDiaries, setLiveDiaries] = useState<Record<string, string>>({});
+  const [outingProcess, setOutingProcess] = useState<
+    Record<string, { query: string | null; pages: Array<{ title: string; url: string }> }>
+  >({});
   const activeRequest = useRef<string | null>(null);
   const knownOutings = useRef(new Set<string>());
   const earlyOutingEvents = useRef(new Map<string, OutingTimelineMessage>());
@@ -498,6 +503,30 @@ export function ChatPanel() {
         content: `${explorationStatusLabel(event.status)}～`,
       });
     }));
+    installListener(listenExplorationQuery((event) => {
+      setOutingProcess((current) => ({
+        ...current,
+        [event.taskId]: {
+          query: event.query,
+          pages: current[event.taskId]?.pages ?? [],
+        },
+      }));
+    }));
+    installListener(listenExplorationPageRead((event) => {
+      setOutingProcess((current) => ({
+        ...current,
+        [event.taskId]: {
+          query: current[event.taskId]?.query ?? null,
+          pages: [...(current[event.taskId]?.pages ?? []), { title: event.title, url: event.url }],
+        },
+      }));
+    }));
+    const clearOutingProcess = (taskId: string) => {
+      setOutingProcess((current) => {
+        const { [taskId]: _dropped, ...rest } = current;
+        return rest;
+      });
+    };
     installListener(listenExplorationDiaryDelta((event) => {
       setLiveDiaries((current) => ({
         ...current,
@@ -509,6 +538,7 @@ export function ChatPanel() {
         const { [event.taskId]: _dropped, ...rest } = current;
         return rest;
       });
+      clearOutingProcess(event.taskId);
       receiveOutingEvent(
         event.taskId,
         outingDiaryMessage(event.taskId, event.result),
@@ -520,6 +550,7 @@ export function ChatPanel() {
         const { [event.taskId]: _dropped, ...rest } = current;
         return rest;
       });
+      clearOutingProcess(event.taskId);
       receiveOutingEvent(event.taskId, {
         id: `outing-${event.taskId}`,
         role: "assistant",
@@ -710,6 +741,38 @@ export function ChatPanel() {
               </ul>
             )}
           </section>
+        )}
+        {Object.entries(outingProcess).map(([taskId, process]) =>
+          process.query || process.pages.length > 0 ? (
+            <article key={`process-${taskId}`} className="message-row assistant">
+              <AssistantIdentity profile={profile} />
+              <div className="message outing-process">
+                {process.query && (
+                  <p className="outing-process-line">
+                    <span aria-hidden="true">🔎</span>
+                    在搜：{process.query}
+                  </p>
+                )}
+                {process.pages.length > 0 && (
+                  <div className="outing-process-pages">
+                    <p className="outing-process-line">
+                      <span aria-hidden="true">📖</span>
+                      {profile.name} 读到了：
+                    </p>
+                    <ul>
+                      {process.pages.map((page, index) => (
+                        <li key={`${page.url}-${index}`}>
+                          <a href={page.url} target="_blank" rel="noreferrer">
+                            {page.title}
+                          </a>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            </article>
+          ) : null,
         )}
         {Object.entries(liveDiaries).map(([taskId, text]) => (
           <article key={`live-${taskId}`} className="message-row assistant">

@@ -34,6 +34,8 @@ use super::{
 };
 
 pub const EXPLORATION_PROGRESS_EVENT: &str = "exploration://progress";
+pub const EXPLORATION_QUERY_EVENT: &str = "exploration://query";
+pub const EXPLORATION_PAGE_READ_EVENT: &str = "exploration://page-read";
 pub const EXPLORATION_DIARY_DELTA_EVENT: &str = "exploration://diary-delta";
 pub const EXPLORATION_COMPLETE_EVENT: &str = "exploration://complete";
 pub const EXPLORATION_ERROR_EVENT: &str = "exploration://error";
@@ -512,6 +514,20 @@ pub enum ExplorationEvent {
         task_id: Uuid,
         status: ExplorationStatus,
     },
+    /// The search query the model chose, shown while public pages are found.
+    QueryChosen {
+        #[serde(rename = "taskId")]
+        task_id: Uuid,
+        query: String,
+    },
+    /// One page AIbb read (title + url), shown as it is fetched so the
+    /// waiting time reads as an active exploration.
+    PageRead {
+        #[serde(rename = "taskId")]
+        task_id: Uuid,
+        title: String,
+        url: String,
+    },
     /// Streaming diary chunks while AIbb writes it, so the outing feels live.
     DiaryDelta {
         #[serde(rename = "taskId")]
@@ -535,6 +551,8 @@ impl ExplorationEvent {
     pub fn task_id(&self) -> Uuid {
         match self {
             Self::Progress { task_id, .. }
+            | Self::QueryChosen { task_id, .. }
+            | Self::PageRead { task_id, .. }
             | Self::DiaryDelta { task_id, .. }
             | Self::Complete { task_id, .. }
             | Self::Error { task_id, .. } => *task_id,
@@ -544,6 +562,8 @@ impl ExplorationEvent {
     pub fn name(&self) -> &'static str {
         match self {
             Self::Progress { .. } => EXPLORATION_PROGRESS_EVENT,
+            Self::QueryChosen { .. } => EXPLORATION_QUERY_EVENT,
+            Self::PageRead { .. } => EXPLORATION_PAGE_READ_EVENT,
             Self::DiaryDelta { .. } => EXPLORATION_DIARY_DELTA_EVENT,
             Self::Complete { .. } => EXPLORATION_COMPLETE_EVENT,
             Self::Error { .. } => EXPLORATION_ERROR_EVENT,
@@ -558,10 +578,14 @@ pub trait ExplorationEventSink: Send + Sync {
 
 /// Accumulates the streamed diary while forwarding every chunk to the
 /// renderer as a `DiaryDelta` event, so the outing reads like a live write.
+/// Only the *value* of the diary field is forwarded: the JSON envelope
+/// (`{"diary":"…","highlights":[…]}`) and any leading chatter/fence are
+/// stripped by the streaming parser, so the renderer never shows raw JSON.
 struct DiaryStreamSink {
     events: Arc<dyn ExplorationEventSink>,
     task_id: Uuid,
-    text: Arc<Mutex<String>>,
+    raw: Arc<Mutex<String>>,
+    parser: Mutex<DiaryStreamParser>,
 }
 
 impl DiaryStreamSink {
@@ -569,27 +593,160 @@ impl DiaryStreamSink {
         Self {
             events,
             task_id,
-            text: Arc::new(Mutex::new(String::new())),
+            raw: Arc::new(Mutex::new(String::new())),
+            parser: Mutex::new(DiaryStreamParser::new()),
         }
     }
 
+    /// The complete raw stream (JSON envelope included) for later parsing.
     fn take(&self) -> String {
-        std::mem::take(&mut *self.text.lock().unwrap())
+        std::mem::take(&mut *self.raw.lock().unwrap())
     }
 }
 
 #[async_trait]
 impl DeltaSink for DiaryStreamSink {
     async fn send(&self, delta: &str) -> Result<(), AppError> {
-        self.text.lock().unwrap().push_str(delta);
-        let _ = self
-            .events
-            .emit(ExplorationEvent::DiaryDelta {
-                task_id: self.task_id,
-                delta: delta.to_string(),
-            })
-            .await;
+        self.raw.lock().unwrap().push_str(delta);
+        let clean = self.parser.lock().unwrap().push(delta);
+        if !clean.is_empty() {
+            let _ = self
+                .events
+                .emit(ExplorationEvent::DiaryDelta {
+                    task_id: self.task_id,
+                    delta: clean,
+                })
+                .await;
+        }
         Ok(())
+    }
+}
+
+/// Streaming extractor that keeps only the text of the JSON `"diary"` value:
+///
+/// ```json
+/// {"diary":"第一段。\n\n第二段。","highlights":[…]}
+/// ```
+///
+/// State machine over characters:
+/// - `Scanning` looks for the literal `"diary"` (tolerating any leading
+///   chatter or markdown fence, which is simply dropped);
+/// - `SeekQuote` skips whitespace and the colon up to the opening quote of
+///   the value;
+/// - `InValue` forwards the value, honouring `\"` escapes, until the closing
+///   quote; everything after (highlights, trailing fences…) is dropped.
+#[derive(Debug, Default)]
+struct DiaryStreamParser {
+    state: DiaryParserState,
+    /// Position inside the `"diary"` needle while scanning.
+    needle: usize,
+}
+
+#[derive(Debug, Default)]
+enum DiaryParserState {
+    #[default]
+    Scanning,
+    SeekQuote,
+    InValue { escaped: bool },
+    Done,
+}
+
+impl DiaryStreamParser {
+    fn new() -> Self {
+        Self::default()
+    }
+
+    fn push(&mut self, chunk: &str) -> String {
+        let mut clean = String::new();
+        for ch in chunk.chars() {
+            match self.state {
+                DiaryParserState::Scanning => {
+                    const NEEDLE: &str = "\"diary\"";
+                    if ch == NEEDLE.as_bytes()[self.needle] as char {
+                        self.needle += 1;
+                        if self.needle == NEEDLE.len() {
+                            self.state = DiaryParserState::SeekQuote;
+                        }
+                    } else {
+                        self.needle = if ch == '"' { 1 } else { 0 };
+                    }
+                }
+                DiaryParserState::SeekQuote => match ch {
+                    '"' => self.state = DiaryParserState::InValue { escaped: false },
+                    ch if ch.is_whitespace() || ch == ':' => {}
+                    _ => {
+                        // Model drifted off the envelope; stop forwarding.
+                        self.state = DiaryParserState::Done;
+                    }
+                },
+                DiaryParserState::InValue { escaped } => {
+                    if escaped {
+                        match ch {
+                            'n' => clean.push('\n'),
+                            't' => clean.push('\t'),
+                            'r' => clean.push('\r'),
+                            '\\' => clean.push('\\'),
+                            '"' => clean.push('"'),
+                            other => clean.push(other),
+                        }
+                        self.state = DiaryParserState::InValue { escaped: false };
+                    } else if ch == '\\' {
+                        self.state = DiaryParserState::InValue { escaped: true };
+                    } else if ch == '"' {
+                        self.state = DiaryParserState::Done;
+                    } else {
+                        clean.push(ch);
+                    }
+                }
+                DiaryParserState::Done => {}
+            }
+        }
+        clean
+    }
+}
+
+#[cfg(test)]
+mod diary_stream_parser_tests {
+    use super::DiaryStreamParser;
+
+    #[test]
+    fn forwards_only_the_diary_value_and_drops_the_json_envelope() {
+        let mut parser = DiaryStreamParser::new();
+        assert_eq!(parser.push(r#"{"diary":"第一段。"#), "第一段。");
+        assert_eq!(
+            parser.push(r#"\n\n第二段。","highlights":[{"paragraph":0}]}"#),
+            "\n\n第二段。"
+        );
+        assert_eq!(parser.push("…"), "");
+    }
+
+    #[test]
+    fn tolerates_leading_chatter_and_a_markdown_fence() {
+        let mut parser = DiaryStreamParser::new();
+        assert_eq!(
+            parser.push("我的日记写好了：\n```json\n{\n  \"diary\" : \"回来啦"),
+            "回来啦"
+        );
+        assert_eq!(parser.push(r#"，带着见闻。""#), "，带着见闻。");
+        assert_eq!(parser.push("\n```"), "");
+    }
+
+    #[test]
+    fn honours_escaped_quotes_inside_the_value() {
+        let mut parser = DiaryStreamParser::new();
+        assert_eq!(
+            parser.push(r#"{"diary":"她说\"真棒\"。""#),
+            "她说\"真棒\"。"
+        );
+        assert_eq!(parser.push("后面就没了"), "");
+    }
+
+    #[test]
+    fn stops_forwarding_once_the_value_ends() {
+        let mut parser = DiaryStreamParser::new();
+        assert_eq!(parser.push(r#"{"diary":"正文"}"#), "正文");
+        assert_eq!(parser.push(r#","highlights":[{"paragraph":0}]}"#), "");
+        assert_eq!(parser.push("正文2"), "");
     }
 }
 
@@ -889,9 +1046,16 @@ impl ExplorationOrchestrator {
                     Ok(NativeWebOutcome::Completed { text, sources }) => {
                         let pages = sources
                             .into_iter()
-                            .map(|source| WebPageMaterial {
-                                source,
-                                text: String::new(),
+                            .map(|source| {
+                                let _ = self.events.emit(ExplorationEvent::PageRead {
+                                    task_id,
+                                    title: source.title.clone(),
+                                    url: source.url.clone(),
+                                });
+                                WebPageMaterial {
+                                    source,
+                                    text: String::new(),
+                                }
                             })
                             .collect::<Vec<_>>();
                         if pages.is_empty() {
@@ -1061,6 +1225,15 @@ impl ExplorationOrchestrator {
             .complete(build_query_request(&context), cancellation.clone())
             .await?;
         let queries = parse_query_envelope(&query_raw)?;
+        if let Some(query) = queries.first() {
+            let _ = self
+                .events
+                .emit(ExplorationEvent::QueryChosen {
+                    task_id,
+                    query: query.clone(),
+                })
+                .await;
+        }
         // Prefer Chinese sources (science forums, frontier news) unless the
         // user explicitly asked for foreign/overseas/English content.
         let prefer_chinese = !source_preference::explicitly_wants_foreign(&context.current_input);
@@ -1099,6 +1272,14 @@ impl ExplorationOrchestrator {
                         &page.canonical_url,
                         &page.text,
                     ) {
+                        let _ = self
+                            .events
+                            .emit(ExplorationEvent::PageRead {
+                                task_id,
+                                title: page.source.title.clone(),
+                                url: page.source.url.clone(),
+                            })
+                            .await;
                         if let Some(image_url) = image_url {
                             image_candidates.push((
                                 page.source.title.clone(),

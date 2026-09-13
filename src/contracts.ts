@@ -188,6 +188,19 @@ export interface ExplorationDiaryDeltaEvent {
   delta: string;
 }
 
+/** The search query the model chose, shown while public pages are found. */
+export interface ExplorationQueryEvent {
+  taskId: string;
+  query: string;
+}
+
+/** One page AIbb read, shown as it is fetched so the wait feels active. */
+export interface ExplorationPageReadEvent {
+  taskId: string;
+  title: string;
+  url: string;
+}
+
 export interface ExplorationErrorEvent extends AppErrorPayload {
   taskId: string;
 }

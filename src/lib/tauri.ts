@@ -16,7 +16,9 @@ import type {
   ExplorationCompleteEvent,
   ExplorationDiaryDeltaEvent,
   ExplorationErrorEvent,
+  ExplorationPageReadEvent,
   ExplorationProgressEvent,
+  ExplorationQueryEvent,
   InputDisposition,
   OutingStats,
   SaveArchiveSettings,
@@ -115,6 +117,12 @@ export const listenChatError = (listener: PayloadListener<ChatErrorEvent>) =>
 export const listenExplorationProgress = (
   listener: PayloadListener<ExplorationProgressEvent>,
 ) => listenFor("exploration://progress", listener);
+export const listenExplorationQuery = (
+  listener: PayloadListener<ExplorationQueryEvent>,
+) => listenFor("exploration://query", listener);
+export const listenExplorationPageRead = (
+  listener: PayloadListener<ExplorationPageReadEvent>,
+) => listenFor("exploration://page-read", listener);
 export const listenExplorationDiaryDelta = (
   listener: PayloadListener<ExplorationDiaryDeltaEvent>,
 ) => listenFor("exploration://diary-delta", listener);

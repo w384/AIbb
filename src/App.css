@@ -498,6 +498,47 @@ img.aibb-avatar {
   to { opacity: 0.72; }
 }
 
+.outing-process {
+  background: rgb(250 252 255 / 86%) !important;
+  border: 1px solid rgb(91 116 167 / 14%) !important;
+}
+
+.outing-process-line {
+  margin: 0 0 6px;
+  color: #5b6884;
+  font-size: 12px;
+}
+
+.outing-process-line span {
+  margin-right: 5px;
+}
+
+.outing-process-pages ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.outing-process-pages li {
+  margin: 4px 0 0;
+  font-size: 12px;
+}
+
+.outing-process-pages li::before {
+  content: "· ";
+  color: #9aa6bd;
+}
+
+.outing-process-pages a {
+  color: #496ba3;
+  text-decoration: none;
+}
+
+.outing-process-pages a:hover {
+  color: #315a99;
+  text-decoration: underline;
+}
+
 .outing-sources {
   display: flex;
   flex-wrap: wrap;
