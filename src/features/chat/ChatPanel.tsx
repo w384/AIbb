@@ -5,8 +5,10 @@ import {
   useState,
   type FormEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent,
 } from "react";
 import { AibbAvatar } from "../../components/AibbAvatar";
+import { ExternalLink } from "../../components/ExternalLink";
 import { ArchivePanel } from "../archive/ArchivePanel";
 import type {
   AibbProfile,
@@ -277,8 +279,10 @@ function AssistantIdentity({ profile }: { profile: AibbProfile }) {
 
 function DiaryBody({
   message,
+  onLinkContextMenu,
 }: {
   message: Extract<OutingTimelineMessage, { kind: "outingDiary" }>;
+  onLinkContextMenu: (event: MouseEvent, url: string) => void;
 }) {
   const paragraphs = message.content
     .split(/\n\s*\n/)
@@ -296,30 +300,28 @@ function DiaryBody({
               <div className="outing-diary-highlight" aria-label="分享的内容">
                 {highlight.imageIndex != null &&
                   message.images[highlight.imageIndex] && (
-                    <a
+                    <ExternalLink
                       className="outing-image"
                       href={message.images[highlight.imageIndex].pageUrl}
-                      target="_blank"
-                      rel="noreferrer"
                       title={message.images[highlight.imageIndex].title}
+                      onLinkContextMenu={onLinkContextMenu}
                     >
                       <img
                         src={message.images[highlight.imageIndex].dataUrl}
                         alt={message.images[highlight.imageIndex].title}
                         loading="lazy"
                       />
-                    </a>
+                    </ExternalLink>
                   )}
                 {highlight.sourceIndex != null &&
                   message.sources[highlight.sourceIndex] && (
-                    <a
+                    <ExternalLink
                       className="outing-source-link"
                       href={message.sources[highlight.sourceIndex].url}
-                      target="_blank"
-                      rel="noreferrer"
+                      onLinkContextMenu={onLinkContextMenu}
                     >
                       🔗 {message.sources[highlight.sourceIndex].title}
-                    </a>
+                    </ExternalLink>
                   )}
               </div>
             )}
@@ -333,9 +335,11 @@ function DiaryBody({
 function MessageBody({
   message,
   profile,
+  onLinkContextMenu,
 }: {
   message: TimelineMessage;
   profile: AibbProfile;
+  onLinkContextMenu: (event: MouseEvent, url: string) => void;
 }) {
   if (message.kind === "outingDiary") {
     return (
@@ -344,20 +348,19 @@ function MessageBody({
           <h2>第 {message.roundNumber} 轮回来啦</h2>
           <span>思考了 {message.elapsedSeconds} 秒</span>
         </div>
-        <DiaryBody message={message} />
+        <DiaryBody message={message} onLinkContextMenu={onLinkContextMenu} />
         {message.images.length > 0 && (
           <div className="outing-images" aria-label="带回的图片">
             {message.images.map((image) => (
-              <a
+              <ExternalLink
                 className="outing-image"
                 href={image.pageUrl}
                 key={image.dataUrl}
-                target="_blank"
-                rel="noreferrer"
                 title={image.title}
+                onLinkContextMenu={onLinkContextMenu}
               >
                 <img src={image.dataUrl} alt={image.title} loading="lazy" />
-              </a>
+              </ExternalLink>
             ))}
           </div>
         )}
@@ -365,9 +368,12 @@ function MessageBody({
           <ul className="outing-sources" aria-label="来源">
             {message.sources.map((source) => (
               <li key={source.url}>
-                <a href={source.url} target="_blank" rel="noreferrer">
+                <ExternalLink
+                  href={source.url}
+                  onLinkContextMenu={onLinkContextMenu}
+                >
                   {source.title}
-                </a>
+                </ExternalLink>
               </li>
             ))}
           </ul>
@@ -407,6 +413,48 @@ export function ChatPanel() {
   const [outingProcess, setOutingProcess] = useState<
     Record<string, { query: string | null; pages: Array<{ title: string; url: string }> }>
   >({});
+  const [linkMenu, setLinkMenu] = useState<{ x: number; y: number; url: string } | null>(null);
+
+  const openLinkMenu = (event: MouseEvent, url: string) => {
+    setLinkMenu({ x: event.clientX, y: event.clientY, url });
+  };
+
+  const copyText = async (text: string) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch {
+      // fall through to the legacy path
+    }
+    const textarea = document.createElement("textarea");
+    textarea.value = text;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    document.body.removeChild(textarea);
+  };
+
+  useEffect(() => {
+    if (!linkMenu) return;
+    const closeMenu = () => setLinkMenu(null);
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") closeMenu();
+    };
+    document.addEventListener("click", closeMenu);
+    document.addEventListener("contextmenu", closeMenu);
+    window.addEventListener("keydown", closeOnEscape);
+    window.addEventListener("scroll", closeMenu, true);
+    return () => {
+      document.removeEventListener("click", closeMenu);
+      document.removeEventListener("contextmenu", closeMenu);
+      window.removeEventListener("keydown", closeOnEscape);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, [linkMenu]);
   const activeRequest = useRef<string | null>(null);
   const knownOutings = useRef(new Set<string>());
   const earlyOutingEvents = useRef(new Map<string, OutingTimelineMessage>());
@@ -672,7 +720,7 @@ export function ChatPanel() {
           <p>{FIRST_RUN_GREETING}</p>
           <ol className="first-run-steps">
             <li>
-              在 <a href="https://platform.deepseek.com" target="_blank" rel="noreferrer">platform.deepseek.com</a>{" "}
+              在 <ExternalLink href="https://platform.deepseek.com" onLinkContextMenu={openLinkMenu}>platform.deepseek.com</ExternalLink>{" "}
               注册并创建 API Key（也支持其他兼容 OpenAI 的服务）。
             </li>
             <li>点下面的按钮打开设置，粘贴 Key，API 地址与模型会自动填好。</li>
@@ -715,7 +763,7 @@ export function ChatPanel() {
         {messages.map((message) => (
           <article key={message.id} className={`message-row ${message.role}`}>
             {message.role === "assistant" ? <AssistantIdentity profile={profile} /> : <span className="message-author">你</span>}
-            <MessageBody message={message} profile={profile} />
+            <MessageBody message={message} profile={profile} onLinkContextMenu={openLinkMenu} />
           </article>
         ))}
         {outingStats && outingStats.totalOutings > 0 && (
@@ -762,9 +810,9 @@ export function ChatPanel() {
                     <ul>
                       {process.pages.map((page, index) => (
                         <li key={`${page.url}-${index}`}>
-                          <a href={page.url} target="_blank" rel="noreferrer">
+                          <ExternalLink href={page.url} onLinkContextMenu={openLinkMenu}>
                             {page.title}
-                          </a>
+                          </ExternalLink>
                         </li>
                       ))}
                     </ul>
@@ -820,6 +868,26 @@ export function ChatPanel() {
           发送
         </button>
       </form>
+      {linkMenu && (
+        <div
+          className="link-context-menu"
+          style={{ left: linkMenu.x, top: linkMenu.y }}
+          role="menu"
+          aria-label="链接菜单"
+          data-testid="link-context-menu"
+        >
+          <button
+            type="button"
+            role="menuitem"
+            onClick={() => {
+              void copyText(linkMenu.url);
+              setLinkMenu(null);
+            }}
+          >
+            🔗 复制链接
+          </button>
+        </div>
+      )}
     </main>
   );
 }

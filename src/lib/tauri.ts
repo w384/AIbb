@@ -35,6 +35,11 @@ export function toggleChatWindow(): Promise<void> {
   return invoke("toggle_chat_window");
 }
 
+/** Opens a link in the user's default browser (never inside the webview). */
+export function openExternal(url: string): Promise<void> {
+  return invoke("open_external_url", { url });
+}
+
 export function openSettingsWindow(): Promise<void> {
   return invoke("open_settings_window");
 }

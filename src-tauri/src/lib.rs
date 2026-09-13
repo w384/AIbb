@@ -21,6 +21,7 @@ use commands::archive::{
 use commands::chat::{build_chat_service, load_chat_history, submit_user_input};
 use commands::exploration::outing_stats;
 use commands::exploration::build_exploration_orchestrator;
+use commands::link::open_external_url;
 use commands::memory::clear_memory;
 use commands::profile::{load_aibb_profile, reset_aibb_avatar, save_aibb_avatar, save_aibb_name};
 use commands::settings::{
@@ -134,7 +135,8 @@ pub fn run() {
             discover_archive_structure,
             take_pending_archive_paths,
             open_archive_window,
-            archive_ledger
+            archive_ledger,
+            open_external_url
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

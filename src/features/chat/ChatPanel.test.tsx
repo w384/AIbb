@@ -29,6 +29,7 @@ import {
   listenExplorationProgress,
   listenExplorationQuery,
   listenProfileUpdated,
+  openExternal,
   openSettingsWindow,
   submitUserInput,
 } from "../../lib/tauri";
@@ -62,6 +63,7 @@ vi.mock("../../lib/tauri", () => ({
   loadAibbProfile: vi.fn(),
   loadChatHistory: vi.fn(),
   loadOutingStats: vi.fn(),
+  openExternal: vi.fn(async () => {}),
   openSettingsWindow: vi.fn(),
   submitUserInput: vi.fn(),
   takePendingArchivePaths: vi.fn(async () => []),
@@ -115,6 +117,7 @@ vi.mock("../../lib/tauri", () => ({
 
 const mockBootstrap = vi.mocked(getBootstrapState);
 const mockSubmit = vi.mocked(submitUserInput);
+const mockOpenExternal = vi.mocked(openExternal);
 
 const diaryResult = {
   items: ["甲", "乙", "丙", "丁"] as [string, string, string, string],
@@ -314,8 +317,7 @@ describe("ChatPanel", () => {
       "https://example.com/one",
     );
     for (const link of within(outingArticle!).getAllByRole("link")) {
-      expect(link).toHaveAttribute("target", "_blank");
-      expect(link).toHaveAttribute("rel", "noreferrer");
+      expect(link).toHaveAttribute("href");
     }
     expect(screen.queryByRole("region", { name: "探索结果" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "允许出去玩" })).not.toBeInTheDocument();
@@ -444,7 +446,6 @@ describe("ChatPanel", () => {
     const image = within(gallery).getByRole("img", { name: "海边的日落" });
     expect(image).toHaveAttribute("src", "data:image/jpeg;base64,AQID");
     expect(image.closest("a")).toHaveAttribute("href", "https://example.com/sunset");
-    expect(image.closest("a")).toHaveAttribute("target", "_blank");
   });
 
   it("shows the diary of a spontaneous outing next to the chat reply", async () => {
@@ -535,6 +536,32 @@ describe("ChatPanel", () => {
     expect(screen.queryByText("在搜：深海发光生物")).not.toBeInTheDocument();
     expect(screen.queryByText("会发光的鲸落")).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "第 2 轮回来啦" })).toBeVisible();
+  });
+
+  it("opens links in the system browser and shows a copy-only menu on right click", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+    mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-links" });
+    render(<ChatPanel />);
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    fireEvent.change(editor, { target: { value: "去海里玩" } });
+    fireEvent.keyDown(editor, { key: "Enter" });
+    await screen.findByText("AIbb 出发，去玩～");
+    act(() => explorationCompleteListener({ taskId: "task-links", result: diaryResult }));
+
+    const sourceLink = await screen.findByRole("link", { name: "可信来源甲" });
+    fireEvent.click(sourceLink);
+    expect(mockOpenExternal).toHaveBeenCalledWith("https://example.com/one");
+
+    fireEvent.contextMenu(sourceLink);
+    const menu = screen.getByTestId("link-context-menu");
+    expect(within(menu).getByRole("menuitem", { name: /复制链接/ })).toBeVisible();
+    fireEvent.click(within(menu).getByRole("menuitem", { name: /复制链接/ }));
+    expect(writeText).toHaveBeenCalledWith("https://example.com/one");
+    expect(screen.queryByTestId("link-context-menu")).not.toBeInTheDocument();
   });
 
   it("streams the diary live and replaces it with the final card", async () => {
