@@ -11,7 +11,7 @@ use uuid::Uuid;
 
 use crate::{
     archive::models::ArchiveLedgerEntry,
-    domain::{CompletedOuting, DirectionCount, ExplorationImage, OutingSource, OutingStats},
+    domain::{ActiveOuting, CompletedOuting, DirectionCount, ExplorationImage, OutingSource, OutingStats},
     error::{AppError, ErrorCode},
     exploration::{CancelOutcome, ExplorationRecord, ExplorationStatus, ExplorationStore},
 };
@@ -547,8 +547,7 @@ impl ExplorationStore for Database {
                 [],
                 |row| row.get::<_, i64>(0),
             )
-            .map_err(|_| exploration_storage_error())?;
-        let total_directions = connection
+            .map_err(|_| exploration_storage_error())?;        let total_directions = connection
             .query_row(
                 "SELECT COUNT(DISTINCT COALESCE(NULLIF(TRIM(user_direction), ''), '随心漫游')) \
                  FROM explorations WHERE status = 'completed'",
@@ -587,6 +586,29 @@ impl ExplorationStore for Database {
             last_outing_at,
             directions,
         })
+    }
+
+    async fn active_outings(&self) -> Result<Vec<ActiveOuting>, AppError> {
+        let connection = self.connection()?;
+        let mut statement = connection
+            .prepare(
+                "SELECT id, status, created_at FROM explorations \
+                 WHERE status IN ('queued', 'choosing', 'native_searching', \
+                                 'public_searching', 'reading', 'writing', 'correcting') \
+                 ORDER BY created_at ASC, rowid ASC",
+            )
+            .map_err(|_| exploration_storage_error())?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(ActiveOuting {
+                    task_id: row.get(0)?,
+                    status: row.get(1)?,
+                    created_at: row.get(2)?,
+                })
+            })
+            .map_err(|_| exploration_storage_error())?;
+        rows.collect::<Result<Vec<_>, _>>()
+            .map_err(|_| exploration_storage_error())
     }
 }
 

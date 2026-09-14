@@ -137,6 +137,16 @@ export interface CompletedOuting {
 export interface ChatHistory {
   messages: HistoryMessage[];
   outings: CompletedOuting[];
+  /** Outings still running, oldest first: re-attach their events on reopen. */
+  activeOutings?: ActiveOuting[];
+}
+
+/** One outing that is still running: restored so AIbb's ongoing activity
+ * stays visible in a reopened chat window. */
+export interface ActiveOuting {
+  taskId: string;
+  status: ExplorationStatus;
+  createdAt: number;
 }
 
 /** How many finished outings went to one direction. */

@@ -2234,6 +2234,54 @@ async fn recovery_atomically_interrupts_only_nonterminal_rows_and_is_idempotent(
 }
 
 #[tokio::test]
+async fn active_outings_lists_running_tasks_and_clears_after_completion() {
+    let temp = tempfile::tempdir().unwrap();
+    let database = Database::open(temp.path().join("aibb.sqlite3")).unwrap();
+
+    // A task that is still running shows up with its current stage.
+    let running = Uuid::new_v4();
+    database.create_queued(running, Some("去看海")).await.unwrap();
+    database.transition(running, ExplorationStatus::Choosing).await.unwrap();
+
+    let active = database.active_outings().await.unwrap();
+    assert_eq!(active.len(), 1, "the running task should be listed");
+    assert_eq!(active[0].task_id, running.to_string());
+    assert_eq!(active[0].status, "choosing");
+
+    // Once the running task ends, the active list is empty again.
+    database.cancel(running).await.unwrap();
+    let active = database.active_outings().await.unwrap();
+    assert!(active.is_empty());
+
+    // A finished task must never appear in the active list.
+    let done = Uuid::new_v4();
+    database.create_queued(done, Some("去看山")).await.unwrap();
+    for status in [
+        ExplorationStatus::Choosing,
+        ExplorationStatus::PublicSearching,
+        ExplorationStatus::Reading,
+        ExplorationStatus::Writing,
+    ] {
+        database.transition(done, status).await.unwrap();
+    }
+    let result = ExplorationResult {
+        items: ["甲".into(), "乙".into(), "丙".into(), "丁".into()],
+        diary: "日记".into(),
+        sources: Vec::new(),
+        images: Vec::new(),
+        round_number: 1,
+        elapsed_seconds: 5,
+        raw_response: VALID_RESULT.into(),
+        highlights: Vec::new(),
+        sections: Vec::new(),
+    };
+    database.complete(done, &result, &result.raw_response).await.unwrap();
+
+    let active = database.active_outings().await.unwrap();
+    assert!(active.is_empty(), "a completed outing is not active");
+}
+
+#[tokio::test]
 async fn events_observe_persisted_states_and_completion_precedes_notification() {
     let harness = Harness::new(
         WebMode::Auto,

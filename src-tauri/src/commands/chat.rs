@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::{
     app_state::AppState,
-    domain::{CompletedOuting, MemoryContext, Message, Role, SummaryCandidate, WebMode},
+    domain::{ActiveOuting, CompletedOuting, MemoryContext, Message, Role, SummaryCandidate, WebMode},
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     exploration::{parse_outing_command, ExplorationRequest, UserInputIntent},
     llm::{ChatMessage, ChatRequest, DeltaSink, LlmTransport, OpenAiClient},
@@ -24,12 +24,14 @@ const DEFAULT_HISTORY_MESSAGES: usize = 50;
 const DEFAULT_HISTORY_OUTINGS: usize = 30;
 
 /// Everything the chat window replays after a restart: the recent text
-/// conversation plus the finished outings (rebuilt as diary cards).
+/// conversation, the finished outings (rebuilt as diary cards), and the
+/// outings that are still running so their live activity stays visible.
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct ChatHistory {
     pub messages: Vec<Message>,
     pub outings: Vec<CompletedOuting>,
+    pub active_outings: Vec<ActiveOuting>,
 }
 
 #[tauri::command]
@@ -42,15 +44,20 @@ pub async fn load_chat_history(
         .memory
         .recent_messages(messages_limit.unwrap_or(DEFAULT_HISTORY_MESSAGES))
         .await?;
-    let outings = match state.exploration.as_ref() {
-        Some(exploration) => {
+    let (outings, active_outings) = match state.exploration.as_ref() {
+        Some(exploration) => (
             exploration
                 .load_completed_outings(outings_limit.unwrap_or(DEFAULT_HISTORY_OUTINGS))
-                .await?
-        }
-        None => Vec::new(),
+                .await?,
+            exploration.load_active_outings().await?,
+        ),
+        None => (Vec::new(), Vec::new()),
     };
-    Ok(ChatHistory { messages, outings })
+    Ok(ChatHistory {
+        messages,
+        outings,
+        active_outings,
+    })
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]

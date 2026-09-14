@@ -225,6 +225,17 @@ pub struct CompletedOuting {
     pub sections: Vec<String>,
 }
 
+/// An outing that is still running. The chat window restores these on reopen
+/// so AIbb's ongoing activity stays visible and its live events keep
+/// updating the row until the outing finishes.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveOuting {
+    pub task_id: String,
+    pub status: String,
+    pub created_at: i64,
+}
+
 /// How many finished outings went to one direction. The raw user wording is
 /// kept so a future heat map can group by place.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

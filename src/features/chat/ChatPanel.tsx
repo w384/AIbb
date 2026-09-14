@@ -739,6 +739,12 @@ export function ChatPanel() {
         if (replay.length > 0) {
           setMessages((current) => (current.length === 0 ? replay : current));
         }
+        // Outings that were already running when this window opened: show
+        // their current stage and re-attach their live events so AIbb's
+        // ongoing activity does not disappear when the window is reopened.
+        for (const outing of history.activeOutings ?? []) {
+          attachOuting(outing.taskId, `${explorationStatusLabel(outing.status)}～`);
+        }
       })
       .catch(() => {});
     void loadAibbProfile()

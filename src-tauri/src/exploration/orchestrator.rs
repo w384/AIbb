@@ -12,8 +12,9 @@ use uuid::Uuid;
 
 use crate::{
     domain::{
-        CompletedOuting, ExplorationImage, ExplorationResult, MemoryContext, OutingDiary,
-        OutingSource, OutingStats, SummaryCandidate, WebMaterial, WebMode, WebPageMaterial,
+        ActiveOuting, CompletedOuting, ExplorationImage, ExplorationResult, MemoryContext,
+        OutingDiary, OutingSource, OutingStats, SummaryCandidate, WebMaterial, WebMode,
+        WebPageMaterial,
     },
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     llm::{ChatMessage, ChatRequest, DeltaSink, LlmTransport, NativeWebOutcome, NativeWebRequest},
@@ -368,6 +369,9 @@ pub trait ExplorationStore: Send + Sync {
         limit: usize,
     ) -> Result<Vec<CompletedOuting>, AppError>;
     async fn outing_stats(&self) -> Result<OutingStats, AppError>;
+    /// The outings that are still running, oldest first, so a reopened chat
+    /// window can show them again and re-attach their live events.
+    async fn active_outings(&self) -> Result<Vec<ActiveOuting>, AppError>;
 }
 
 #[async_trait]
@@ -928,6 +932,12 @@ impl ExplorationOrchestrator {
     /// counts, the future basis of a play-heat map.
     pub async fn outing_stats(&self) -> Result<OutingStats, AppError> {
         self.store.outing_stats().await
+    }
+
+    /// The outings that are still running, oldest first, so a reopened chat
+    /// window can show AIbb's ongoing activity again.
+    pub async fn load_active_outings(&self) -> Result<Vec<ActiveOuting>, AppError> {
+        self.store.active_outings().await
     }
 
     async fn prepare(
