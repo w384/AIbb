@@ -553,6 +553,8 @@ export function SettingsPanel() {
         </section>
         {profileError && <p className="feedback error" role="alert">{profileError.message}</p>}
 
+        <h2 className="settings-section-title">大模型连接</h2>
+
         <label className="field">
           <span>API 地址</span>
           <input

@@ -987,7 +987,11 @@ export function ChatPanel() {
             onKeyDown={handleEditorKeyDown}
           />
         </label>
-        <button className="send-button" type="submit" disabled={Boolean(activeRequestId) || !input.trim()}>
+        <button
+          className={`send-button${activeRequestId ? " sending" : ""}`}
+          type="submit"
+          disabled={Boolean(activeRequestId) || !input.trim()}
+        >
           发送
         </button>
       </form>
