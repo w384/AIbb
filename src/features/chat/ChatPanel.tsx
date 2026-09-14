@@ -214,6 +214,7 @@ function historyDiaryMessage(outing: CompletedOuting): OutingTimelineMessage {
     images: outing.images,
     roundNumber: outing.roundNumber,
     elapsedSeconds: outing.elapsedSeconds,
+    sections: outing.sections ?? [],
   };
 }
 

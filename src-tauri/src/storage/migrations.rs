@@ -148,6 +148,10 @@ const OUTING_IMAGES: &str = r#"
 ALTER TABLE explorations ADD COLUMN images_json TEXT;
 "#;
 
+const OUTING_SECTIONS: &str = r#"
+ALTER TABLE explorations ADD COLUMN sections_json TEXT;
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
     Migrations::new(vec![
         M::up(INITIAL_SCHEMA),
@@ -158,6 +162,7 @@ pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Erro
         M::up(ARCHIVE_FEATURE),
         M::up(PERSONA),
         M::up(OUTING_IMAGES),
+        M::up(OUTING_SECTIONS),
     ])
     .to_latest(connection)
 }

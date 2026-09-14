@@ -130,6 +130,8 @@ export interface CompletedOuting {
   images: ExplorationImage[];
   elapsedSeconds: number;
   createdAt: number;
+  /** The four planned section angles; absent for older outings. */
+  sections?: string[];
 }
 
 export interface ChatHistory {

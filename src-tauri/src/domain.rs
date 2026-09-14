@@ -219,6 +219,10 @@ pub struct CompletedOuting {
     pub images: Vec<ExplorationImage>,
     pub elapsed_seconds: u64,
     pub created_at: i64,
+    /// The four planned section angles, restored so the diary card can show
+    /// the same direction chips after a restart. Empty for older outings.
+    #[serde(default)]
+    pub sections: Vec<String>,
 }
 
 /// How many finished outings went to one direction. The raw user wording is

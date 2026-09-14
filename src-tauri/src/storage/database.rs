@@ -369,12 +369,14 @@ impl ExplorationStore for Database {
             i64::try_from(result.elapsed_seconds).map_err(|_| exploration_storage_error())?;
         let images =
             serde_json::to_string(&result.images).map_err(|_| exploration_storage_error())?;
+        let sections =
+            serde_json::to_string(&result.sections).map_err(|_| exploration_storage_error())?;
         let changed = transaction
             .execute(
                 "UPDATE explorations SET status = ?1, items_json = ?2, \
                    diary = ?3, sources_json = ?4, round_number = ?5, elapsed_seconds = ?6, \
                    next_outing_request = NULL, raw_response = ?7, error_code = NULL, \
-                   images_json = ?8, updated_at = ?9 WHERE id = ?10",
+                   images_json = ?8, sections_json = ?9, updated_at = ?10 WHERE id = ?11",
                 params![
                     ExplorationStatus::Completed.as_storage_value(),
                     items,
@@ -384,6 +386,7 @@ impl ExplorationStore for Database {
                     elapsed_seconds,
                     safe_raw_response,
                     images,
+                    sections,
                     now,
                     id.to_string()
                 ],
@@ -524,7 +527,7 @@ impl ExplorationStore for Database {
         let mut statement = connection
             .prepare(
                 "SELECT round_number, user_direction, diary, sources_json, images_json, \
-                 elapsed_seconds, created_at \
+                 elapsed_seconds, created_at, sections_json \
                  FROM explorations WHERE status = 'completed' \
                  ORDER BY created_at DESC LIMIT ?1",
             )
@@ -590,6 +593,7 @@ impl ExplorationStore for Database {
 fn completed_outing_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<CompletedOuting> {
     let sources = json_list_from_row::<OutingSource>(row, 3)?;
     let images = json_list_from_row::<ExplorationImage>(row, 4)?;
+    let sections = json_list_from_row::<String>(row, 7)?;
     let direction = row
         .get::<_, Option<String>>(1)?
         .filter(|direction| !direction.trim().is_empty());
@@ -603,6 +607,7 @@ fn completed_outing_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Comple
         elapsed_seconds: u64::try_from(row.get::<_, Option<i64>>(5)?.unwrap_or(0))
             .unwrap_or_default(),
         created_at: row.get(6)?,
+        sections,
     })
 }
 

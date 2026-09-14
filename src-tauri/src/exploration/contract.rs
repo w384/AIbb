@@ -59,6 +59,7 @@ struct ExplorationEnvelope {
     /// as an extra `theme` field. It carries no routing meaning — accept and
     /// ignore it so a stylistic flourish does not fail the whole outing.
     #[serde(default)]
+    #[allow(dead_code)]
     theme: Option<String>,
 }
 

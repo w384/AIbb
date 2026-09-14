@@ -719,7 +719,7 @@ pub async fn submit_user_input(
 ) -> Result<InputDisposition, AppError> {
     match parse_outing_command(&message) {
         UserInputIntent::Explore { direction } => {
-            start_exploration(&state, direction).await
+            start_exploration(&state, &message, direction).await
         }
         UserInputIntent::Chat => {
             // 关键词路由未命中：先让大模型判断用户到底想做什么，
@@ -727,7 +727,7 @@ pub async fn submit_user_input(
             if let Some(UserInputIntent::Explore { direction }) =
                 classify_llm_intent(&state, &message).await
             {
-                return start_exploration(&state, direction).await;
+                return start_exploration(&state, &message, direction).await;
             }
             let spontaneous_task_id = start_spontaneous_exploration(&state, &message).await;
             start_chat(state, message, request_id.clone()).await?;
@@ -749,8 +749,22 @@ async fn classify_llm_intent(
 
 async fn start_exploration(
     state: &tauri::State<'_, AppState>,
+    message: &str,
     direction: Option<String>,
 ) -> Result<InputDisposition, AppError> {
+    // 出游指令同样写入对话记忆：否则只有 AIbb 的日记被存档，用户发过的
+    // 内容在重开聊天窗后会凭空消失（实时气泡只是前端本地渲染）。
+    // 记忆写入失败不应阻止出游本身。
+    let exact_key = state
+        .settings
+        .exploration_task_snapshot()
+        .await
+        .ok()
+        .map(|snapshot| snapshot.into_parts().1)
+        .flatten();
+    let safe_message = sanitize_sensitive_text(message, exact_key.as_deref());
+    let _ = state.memory.append(Role::User, safe_message).await;
+
     let task_id = state
         .exploration
         .as_ref()

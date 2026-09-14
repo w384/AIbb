@@ -960,6 +960,7 @@ fn migrations_create_the_required_schema_without_an_api_key_column() {
             "round_number",
             "elapsed_seconds",
             "images_json",
+            "sections_json",
         ]
     );
 }
