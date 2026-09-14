@@ -420,10 +420,11 @@ img.aibb-avatar {
   max-width: 84%;
   flex-direction: column;
   gap: 5px;
-  animation: message-in 260ms ease-out both;
+  animation: message-in 260ms ease-out;
 }
 
-/* 新消息上浮淡入。 */
+/* 新消息上浮淡入。注意不用 fill-mode: both：那会把未播放完动画的
+   元素钉在起始帧 opacity 0，历史消息在窗口未激活时挂载就会消失。 */
 @keyframes message-in {
   from {
     opacity: 0;
@@ -1849,4 +1850,27 @@ img.aibb-avatar {
 .feedback.warning {
   background: var(--ai-warning-tint);
   color: var(--ai-warning-text);
+}
+
+/* 尊重系统的“减少动态效果”设置：关闭装饰性动画，保留可读性。 */
+@media (prefers-reduced-motion: reduce) {
+  .pet,
+  .pet-return-indicator,
+  .pet-surface[data-status="exploring"] .pet,
+  .pet-surface[data-status="returned"] .pet,
+  .pet-surface:has(.pet-error) .pet,
+  .message-row,
+  .thinking-dot,
+  .thinking-dot::before,
+  .thinking-dot::after,
+  .outing-status-paw,
+  .outing-status-dots i,
+  .outing-diary-live .outing-diary-content,
+  .send-button.sending {
+    animation: none !important;
+  }
+
+  .outing-image img {
+    transition: none !important;
+  }
 }
