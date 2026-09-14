@@ -169,6 +169,11 @@ pub struct ExplorationResult {
     /// wall of text. Empty when the diary never asked for any.
     #[serde(default)]
     pub highlights: Vec<DiaryHighlight>,
+    /// The four divergent angles the model planned before writing, one short
+    /// title per diary section (in order). Empty when the model did not plan
+    /// them (older data / fallback), which the renderer treats as no label.
+    #[serde(default)]
+    pub sections: Vec<String>,
 }
 
 /// One spot inside the diary where AIbb points the reader at something she
@@ -185,11 +190,13 @@ pub struct DiaryHighlight {
     pub image_index: Option<usize>,
 }
 
-/// Parsed outing diary: the free-text body plus the model-chosen highlights.
+/// Parsed outing diary: the free-text body, the model-chosen highlights, and
+/// the four pre-planned section angles (titles) that gave the body its shape.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutingDiary {
     pub text: String,
     pub highlights: Vec<DiaryHighlight>,
+    pub sections: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

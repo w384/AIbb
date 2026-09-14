@@ -511,6 +511,41 @@ img.aibb-avatar {
   font-size: 15px;
 }
 
+/* 本次出游的 4 个分散角度标签（模型在动笔前规划好的方向）。 */
+.outing-diary-sections {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 0;
+  list-style: none;
+}
+
+.outing-diary-sections li {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid rgb(91 116 167 / 16%);
+  border-radius: 999px;
+  color: #4a5a78;
+  background: rgb(244 248 255 / 88%);
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.outing-diary-section-index {
+  display: inline-grid;
+  width: 15px;
+  height: 15px;
+  place-items: center;
+  border-radius: 50%;
+  color: #fff;
+  background: var(--ai-brand-gradient-soft);
+  font-size: 9px;
+  font-weight: 700;
+}
+
 .outing-diary-heading span {
   flex: 0 0 auto;
   color: var(--ai-text-faint);

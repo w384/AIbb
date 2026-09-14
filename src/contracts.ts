@@ -98,6 +98,9 @@ export interface ExplorationResult {
   rawResponse: string;
   /** Model-chosen spots inside the diary that show a source link or picture. */
   highlights?: DiaryHighlight[];
+  /** The four divergent angles the model planned before writing, one short
+   * title per section in order. Absent for older outings — render no label. */
+  sections?: string[];
 }
 
 /** One spot inside the diary where AIbb points the reader at something she
@@ -168,6 +171,8 @@ export type OutingTimelineMessage =
       elapsedSeconds: number;
       /** Model-chosen spots inside the diary that show a source link or picture. */
       highlights?: DiaryHighlight[];
+      /** The four planned section angles; absent for historical outings. */
+      sections?: string[];
     }
   | {
       id: string;

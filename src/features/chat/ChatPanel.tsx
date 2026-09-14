@@ -199,6 +199,7 @@ function outingDiaryMessage(
     roundNumber: result.roundNumber,
     elapsedSeconds: result.elapsedSeconds,
     highlights: result.highlights ?? [],
+    sections: result.sections ?? [],
   };
 }
 
@@ -354,8 +355,19 @@ function DiaryBody({
     .map((paragraph) => paragraph.trim())
     .filter(Boolean);
   const highlights = message.highlights ?? [];
+  const sections = message.sections ?? [];
   return (
     <>
+      {sections.length > 0 && (
+        <ol className="outing-diary-sections" aria-label="这次从四个角度逛">
+          {sections.map((section, index) => (
+            <li key={index}>
+              <span className="outing-diary-section-index">{index + 1}</span>
+              {section}
+            </li>
+          ))}
+        </ol>
+      )}
       {paragraphs.map((block, index) => {
         const part = parseDiaryBlock(block);
         const highlight = highlights.find((spot) => spot.paragraph === index);

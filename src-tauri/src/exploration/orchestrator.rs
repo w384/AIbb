@@ -1138,6 +1138,7 @@ impl ExplorationOrchestrator {
             cancellation.clone(),
         ).await?;
         result.diary = diary.text;
+        result.sections = diary.sections;
         result.sources = web_material
             .pages
             .iter()
@@ -1407,6 +1408,11 @@ fn sanitize_result(
         *item = sanitize_sensitive_text(item, exact_key);
     }
     result.diary = sanitize_sensitive_text(&result.diary, exact_key);
+    result.sections = result
+        .sections
+        .into_iter()
+        .map(|section| sanitize_sensitive_text(&section, exact_key))
+        .collect();
     result.images = result
         .images
         .into_iter()

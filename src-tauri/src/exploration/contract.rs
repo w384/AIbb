@@ -37,6 +37,7 @@ pub fn parse_exploration_result(raw: &str) -> Result<ExplorationResult, Contract
         elapsed_seconds: 0,
         raw_response: raw.to_string(),
         highlights: Vec::new(),
+        sections: Vec::new(),
     })
 }
 

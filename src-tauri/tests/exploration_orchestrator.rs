@@ -1997,6 +1997,7 @@ async fn completed_round_numbers_are_unique_at_the_storage_boundary() {
         elapsed_seconds: 1,
         raw_response: VALID_RESULT.into(),
         highlights: Vec::new(),
+        sections: Vec::new(),
     };
 
     for task_id in [first, second] {
@@ -2075,6 +2076,7 @@ async fn completed_outings_survive_restart_with_sources_and_pictures() {
         elapsed_seconds: 21,
         raw_response: VALID_RESULT.into(),
         highlights: Vec::new(),
+        sections: Vec::new(),
     };
     database
         .complete(task_id, &result, &result.raw_response)
@@ -2124,6 +2126,7 @@ async fn outing_stats_count_trips_and_group_by_direction() {
             elapsed_seconds: 9,
             raw_response: VALID_RESULT.into(),
             highlights: Vec::new(),
+            sections: Vec::new(),
         };
         database.complete(task_id, &result, &result.raw_response).await.unwrap();
     }
@@ -2157,6 +2160,7 @@ async fn outing_stats_count_trips_and_group_by_direction() {
         elapsed_seconds: 11,
         raw_response: VALID_RESULT.into(),
         highlights: Vec::new(),
+        sections: Vec::new(),
     };
     database
         .complete(roam, &roam_result, &roam_result.raw_response)
