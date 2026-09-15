@@ -63,9 +63,9 @@ export function PetSurface({ status }: PetSurfaceProps) {
   const pressOrigin = useRef<PressOrigin | null>(null);
   const suppressNextClick = useRef(false);
   // 手动拖动：窗口跟随指针移动（保持透明），pointermove 用 rAF 节流，
-  // 每次只发送最新坐标，避免 IPC 积压。
+  // 每帧只发一次移动指令，后端直接读系统光标位置来定位窗口，不做
+  // CSS/DPI 换算，任何方向、任何缩放都不漂移。
   const dragFrame = useRef<number | null>(null);
-  const pendingDragMove = useRef<{ x: number; y: number } | null>(null);
   const draggingRef = useRef(false);
   const dragPointerId = useRef<number | null>(null);
 
@@ -145,18 +145,14 @@ export function PetSurface({ status }: PetSurfaceProps) {
     if (dragFrame.current !== null) {
       window.cancelAnimationFrame(dragFrame.current);
       dragFrame.current = null;
-      pendingDragMove.current = null;
     }
   }
 
-  function scheduleDragMove(screenX: number, screenY: number) {
-    pendingDragMove.current = { x: screenX, y: screenY };
+  function scheduleDragMove() {
     if (dragFrame.current !== null) return;
     dragFrame.current = window.requestAnimationFrame(() => {
       dragFrame.current = null;
-      const pending = pendingDragMove.current;
-      pendingDragMove.current = null;
-      if (pending) void petDragMove(pending.x, pending.y);
+      void petDragMove();
     });
   }
 
@@ -174,15 +170,15 @@ export function PetSurface({ status }: PetSurfaceProps) {
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     longPressTimer.current = window.setTimeout(() => {
-      beginDrag(event.pointerId, event.screenX, event.screenY);
+      beginDrag(event.pointerId);
     }, LONG_PRESS_MS);
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
-    // 拖动进行中：只认正在拖动的那个指针，把最新屏幕坐标节流后发给后端。
+    // 拖动进行中：认正在拖动的那个指针，每帧通知后端移动一次窗口。
     if (draggingRef.current) {
       if (dragPointerId.current === event.pointerId) {
-        scheduleDragMove(event.screenX, event.screenY);
+        scheduleDragMove();
       }
       return;
     }
@@ -199,11 +195,11 @@ export function PetSurface({ status }: PetSurfaceProps) {
       Math.hypot(event.clientX - origin.x, event.clientY - origin.y) >=
       DRAG_DISTANCE_PX
     ) {
-      beginDrag(event.pointerId, event.screenX, event.screenY);
+      beginDrag(event.pointerId);
     }
   }
 
-  function beginDrag(pointerId: number, screenX: number, screenY: number) {
+  function beginDrag(pointerId: number) {
     if (activePointer.current !== pointerId) return;
     clearLongPressTimer();
     dragPointerId.current = pointerId;
@@ -212,7 +208,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
     suppressNextClick.current = true;
     draggingRef.current = true;
     setDragging(true);
-    void petDragBegin(screenX, screenY);
+    void petDragBegin();
   }
 
   function finishPointer(event: ReactPointerEvent<HTMLButtonElement>) {

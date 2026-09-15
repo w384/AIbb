@@ -21,48 +21,46 @@ pub fn exit_app(app: AppHandle) {
     app.exit(0);
 }
 
-/// Anchor of an in-flight manual pet drag: the window position and the pointer
-/// screen coordinates (CSS pixels) at the moment the drag started. Moving the
-/// window manually instead of using the system `start_dragging` keeps the
-/// transparent window transparent the whole time — no white block, no
-/// rectangular WebView snapshot while it moves.
+/// Anchor of an in-flight manual pet drag: the window position and the
+/// system cursor position (both physical pixels, origin at the top-left of
+/// the desktop) at the moment the drag started. The backend reads the cursor
+/// directly on every move, so no CSS-pixel / scale-factor conversion can
+/// drift — long horizontal drags stay as accurate as short vertical ones.
+/// Moving the window manually instead of using the system `start_dragging`
+/// keeps the transparent window transparent the whole time — no white block,
+/// no rectangular WebView snapshot while it moves.
 #[derive(Clone, Copy)]
 struct PetDragAnchor {
     window_x: i32,
     window_y: i32,
-    screen_x: f64,
-    screen_y: f64,
+    cursor_x: i32,
+    cursor_y: i32,
 }
 
 static PET_DRAG_ANCHOR: Mutex<Option<PetDragAnchor>> = Mutex::new(None);
 
 #[tauri::command]
-pub fn pet_drag_begin(
-    app: AppHandle,
-    screen_x: f64,
-    screen_y: f64,
-) -> Result<(), AppError> {
+pub fn pet_drag_begin(app: AppHandle) -> Result<(), AppError> {
     let window = window_controller::pet_window(&app)?;
     let position = window
         .outer_position()
         .map_err(|error| window_error("read pet drag start position", error))?;
+    let cursor = window
+        .cursor_position()
+        .map_err(|error| window_error("read pet drag start cursor", error))?;
     *PET_DRAG_ANCHOR
         .lock()
         .map_err(|_| drag_state_error())? = Some(PetDragAnchor {
         window_x: position.x,
         window_y: position.y,
-        screen_x,
-        screen_y,
+        cursor_x: cursor.x.round() as i32,
+        cursor_y: cursor.y.round() as i32,
     });
     Ok(())
 }
 
 #[tauri::command]
-pub fn pet_drag_move(
-    app: AppHandle,
-    screen_x: f64,
-    screen_y: f64,
-) -> Result<(), AppError> {
+pub fn pet_drag_move(app: AppHandle) -> Result<(), AppError> {
     let Some(anchor) = *PET_DRAG_ANCHOR
         .lock()
         .map_err(|_| drag_state_error())?
@@ -70,15 +68,15 @@ pub fn pet_drag_move(
         return Ok(());
     };
     let window = window_controller::pet_window(&app)?;
-    let scale = window
-        .scale_factor()
-        .map_err(|error| window_error("read pet drag scale factor", error))?;
-    let delta_x = (screen_x - anchor.screen_x) * scale;
-    let delta_y = (screen_y - anchor.screen_y) * scale;
+    let cursor = window
+        .cursor_position()
+        .map_err(|error| window_error("read pet drag cursor", error))?;
+    let delta_x = cursor.x.round() as i32 - anchor.cursor_x;
+    let delta_y = cursor.y.round() as i32 - anchor.cursor_y;
     window
         .set_position(PhysicalPosition::new(
-            anchor.window_x + delta_x.round() as i32,
-            anchor.window_y + delta_y.round() as i32,
+            anchor.window_x + delta_x,
+            anchor.window_y + delta_y,
         ))
         .map_err(|error| window_error("move pet window", error))
 }

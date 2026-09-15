@@ -44,15 +44,16 @@ export function openSettingsWindow(): Promise<void> {
   return invoke("open_settings_window");
 }
 
-/** Starts a manual pet drag at the given pointer screen position (CSS px).
- * The window is moved by set_position on every move so it stays transparent
- * while dragging — no white block, no rectangular snapshot. */
-export function petDragBegin(screenX: number, screenY: number): Promise<void> {
-  return invoke("pet_drag_begin", { screenX, screenY });
+/** Starts a manual pet drag. The backend anchors the current window and
+ * cursor positions and moves the window by set_position on every move so it
+ * stays transparent while dragging — no white block, no rectangular snapshot.
+ * The cursor is read by the backend, so the drag is exact on any DPI. */
+export function petDragBegin(): Promise<void> {
+  return invoke("pet_drag_begin");
 }
 
-export function petDragMove(screenX: number, screenY: number): Promise<void> {
-  return invoke("pet_drag_move", { screenX, screenY });
+export function petDragMove(): Promise<void> {
+  return invoke("pet_drag_move");
 }
 
 /** Ends the drag: snaps to the nearest edge and remembers the position. */
