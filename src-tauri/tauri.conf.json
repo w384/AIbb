@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "label": "pet",
@@ -23,6 +24,7 @@
         "resizable": false,
         "skipTaskbar": true,
         "alwaysOnTop": true,
+        "visibleOnAllWorkspaces": true,
         "dragDropEnabled": true
       }
     ],

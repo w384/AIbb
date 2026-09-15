@@ -3,14 +3,52 @@ name: build-macos
 on:
   workflow_dispatch:
   push:
-    tags:
-      - "v*"
+    branches: [feature/aibb-desktop-pet]
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
+  check:
+    name: macOS check & tests
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust builds
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Type-check the frontend
+        run: pnpm exec tsc --noEmit -p tsconfig.json
+
+      - name: Run the frontend tests
+        run: pnpm exec vitest run
+
+      - name: Run the Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
   build:
+    name: Build the macOS bundle
+    needs: check
     runs-on: macos-latest
     steps:
       - name: Checkout

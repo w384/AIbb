@@ -64,6 +64,16 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
 
+            // 桌宠只在菜单栏保留存在感：macOS 上让应用处于 Accessory 模式，
+            // 不出现在 Dock，也不抢占全局菜单栏焦点（Windows 的 skipTaskbar
+            // 在 macOS 不生效，所以这里单独处理）。
+            #[cfg(target_os = "macos")]
+            {
+                let _ = app
+                    .handle()
+                    .set_activation_policy(tauri::ActivationPolicy::Accessory);
+            }
+
             let app_data_dir = app.path().app_data_dir()?;
             let database_path = app_data_dir.join("aibb.sqlite3");
             let database = Database::open(database_path)?;

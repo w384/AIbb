@@ -30,7 +30,7 @@ pub fn install_tray(app: &AppHandle, profile_name: &str) -> tauri::Result<()> {
     let menu_name = profile_name.to_string();
     let click_name = profile_name.to_string();
 
-    let mut builder = TrayIconBuilder::with_id("aibb-tray")
+    let builder = TrayIconBuilder::with_id("aibb-tray")
         .menu(&menu)
         .tooltip(format!("{profile_name} — AIbb"))
         .on_menu_event(move |app, event| match event.id.as_ref() {
@@ -51,9 +51,16 @@ pub fn install_tray(app: &AppHandle, profile_name: &str) -> tauri::Result<()> {
             }
         });
 
-    if let Some(icon) = icon {
-        builder = builder.icon(icon);
-    }
+    // macOS 的菜单栏图标左键默认弹出菜单而不是触发 Click 事件；关闭该行为
+    // 后左键就会走上面的 Click 分支（开关聊天窗），右键仍弹菜单。
+    #[cfg(target_os = "macos")]
+    let builder = builder.show_menu_on_left_click(false);
+
+    let builder = if let Some(icon) = icon {
+        builder.icon(icon)
+    } else {
+        builder
+    };
 
     builder.build(app)?;
     Ok(())
