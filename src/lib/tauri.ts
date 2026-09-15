@@ -44,14 +44,20 @@ export function openSettingsWindow(): Promise<void> {
   return invoke("open_settings_window");
 }
 
-export async function startPetDrag(): Promise<void> {
-  await invoke("start_pet_drag");
-  const position = await getCurrentWindow().outerPosition();
-  await savePetPosition(position.x, position.y);
+/** Starts a manual pet drag at the given pointer screen position (CSS px).
+ * The window is moved by set_position on every move so it stays transparent
+ * while dragging — no white block, no rectangular snapshot. */
+export function petDragBegin(screenX: number, screenY: number): Promise<void> {
+  return invoke("pet_drag_begin", { screenX, screenY });
 }
 
-export function savePetPosition(x: number, y: number): Promise<void> {
-  return invoke("save_pet_position", { x, y });
+export function petDragMove(screenX: number, screenY: number): Promise<void> {
+  return invoke("pet_drag_move", { screenX, screenY });
+}
+
+/** Ends the drag: snaps to the nearest edge and remembers the position. */
+export function petDragEnd(): Promise<void> {
+  return invoke("pet_drag_end");
 }
 
 export function getBootstrapState(): Promise<BootstrapState> {

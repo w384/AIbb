@@ -10,7 +10,9 @@
     "allow-load-aibb-profile",
     "allow-toggle-chat-window",
     "allow-open-settings-window",
-    "allow-start-pet-drag",
+    "allow-pet-drag-begin",
+    "allow-pet-drag-move",
+    "allow-pet-drag-end",
     "allow-save-pet-position",
     "allow-open-archive-window"
   ]

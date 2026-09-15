@@ -1,6 +1,5 @@
 use tauri::{
-    window::Color, AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow,
-    WebviewWindowBuilder,
+    AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
 use crate::{
@@ -80,25 +79,16 @@ pub fn open_settings(app: &AppHandle, profile_name: &str) -> Result<(), AppError
         .map_err(|error| window_error("focus settings window", error))
 }
 
-pub fn start_pet_drag(window: &WebviewWindow) -> Result<(), AppError> {
-    // A transparent window is composited by DWM as a layered window while the
-    // system drags it, so the WebView content lags behind and leaves a visible
-    // “dragging a picture” trail. Switching to an opaque background for the
-    // duration of the drag makes Windows move a normal solid window instead;
-    // transparency is restored afterwards. On Windows `start_dragging` blocks
-    // until the drag ends, which is exactly the span we need to cover.
-    let _ = window.set_background_color(Some(Color(255, 255, 255, 255)));
-    let drag_result = window.start_dragging();
-    let restore_result = window.set_background_color(Some(Color(0, 0, 0, 0)));
-    drag_result.map_err(|error| window_error("start pet drag", error))?;
-    restore_result.map_err(|error| window_error("restore pet drag background", error))?;
-    snap_pet_to_work_area_edge(window)
+/// The always-visible floating pet window, if it exists yet.
+pub fn pet_window(app: &AppHandle) -> Result<WebviewWindow, AppError> {
+    app.get_webview_window("pet")
+        .ok_or_else(|| window_error("find pet window", tauri::Error::WindowNotFound))
 }
 
 /// After a drag ends, snap the pet to the nearest edge of its current
 /// monitor's work area (with a small margin) and always clamp it fully on
 /// screen, so the floating pet never ends up half off the display.
-fn snap_pet_to_work_area_edge(window: &WebviewWindow) -> Result<(), AppError> {
+pub fn snap_pet_to_work_area_edge(window: &WebviewWindow) -> Result<(), AppError> {
     let position = window
         .outer_position()
         .map_err(|error| window_error("read pet drag position", error))?;

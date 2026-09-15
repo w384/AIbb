@@ -189,6 +189,14 @@ body,
   filter: brightness(0.97);
 }
 
+/* 手动拖动期间：停掉呼吸/探索动画，光标变抓手，避免动画与位移打架。 */
+.pet.dragging {
+  cursor: grabbing;
+  animation: none;
+  transform: scale(0.96);
+  filter: brightness(0.97);
+}
+
 .pet-surface[data-status="exploring"] .pet {
   border-color: rgb(67 139 229 / 68%);
   animation: pet-exploring 1.4s ease-in-out infinite;

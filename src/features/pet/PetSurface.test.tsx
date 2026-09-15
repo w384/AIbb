@@ -4,7 +4,8 @@ import { PetSurface } from "./PetSurface";
 import {
   openArchiveWindow,
   openSettingsWindow,
-  startPetDrag,
+  petDragBegin,
+  petDragEnd,
   toggleChatWindow,
   loadAibbProfile,
   listenProfileUpdated,
@@ -38,7 +39,9 @@ vi.mock("@tauri-apps/api/webview", () => ({
 
 vi.mock("../../lib/tauri", () => ({
   openSettingsWindow: vi.fn(),
-  startPetDrag: vi.fn(),
+  petDragBegin: vi.fn(),
+  petDragMove: vi.fn(),
+  petDragEnd: vi.fn(),
   toggleChatWindow: vi.fn(),
   openArchiveWindow: vi.fn(async () => undefined),
   loadAibbProfile: vi.fn(),
@@ -61,7 +64,8 @@ vi.mock("../../lib/tauri", () => ({
 }));
 
 const mockOpenSettings = vi.mocked(openSettingsWindow);
-const mockStartPetDrag = vi.mocked(startPetDrag);
+const mockPetDragBegin = vi.mocked(petDragBegin);
+const mockPetDragEnd = vi.mocked(petDragEnd);
 const mockToggleChat = vi.mocked(toggleChatWindow);
 const mockOpenArchiveWindow = vi.mocked(openArchiveWindow);
 
@@ -244,7 +248,7 @@ describe("PetSurface", () => {
     fireEvent.pointerUp(pet, { clientX: 15, clientY: 10, pointerId: 1 });
     fireEvent.click(pet, { detail: 1 });
 
-    expect(mockStartPetDrag).not.toHaveBeenCalled();
+    expect(mockPetDragBegin).not.toHaveBeenCalled();
     expect(mockToggleChat).toHaveBeenCalledTimes(1);
   });
 
@@ -261,10 +265,11 @@ describe("PetSurface", () => {
     });
 
     act(() => vi.advanceTimersByTime(99));
-    expect(mockStartPetDrag).not.toHaveBeenCalled();
+    expect(mockPetDragBegin).not.toHaveBeenCalled();
     act(() => vi.advanceTimersByTime(1));
-    expect(mockStartPetDrag).toHaveBeenCalledTimes(1);
+    expect(mockPetDragBegin).toHaveBeenCalledTimes(1);
     fireEvent.pointerUp(pet, { pointerId: 7 });
+    expect(mockPetDragEnd).toHaveBeenCalledTimes(1);
     fireEvent.click(pet, { detail: 1 });
     expect(mockToggleChat).not.toHaveBeenCalled();
   });
@@ -290,7 +295,7 @@ describe("PetSurface", () => {
       pointerId: 8,
     });
 
-    expect(mockStartPetDrag).toHaveBeenCalledTimes(1);
+    expect(mockPetDragBegin).toHaveBeenCalledTimes(1);
     fireEvent.click(pet, { detail: 1 });
     expect(mockToggleChat).not.toHaveBeenCalled();
   });
@@ -311,7 +316,7 @@ describe("PetSurface", () => {
     fireEvent.contextMenu(pet);
     act(() => vi.advanceTimersByTime(500));
 
-    expect(mockStartPetDrag).not.toHaveBeenCalled();
+    expect(mockPetDragBegin).not.toHaveBeenCalled();
     expect(mockOpenSettings).toHaveBeenCalledTimes(1);
   });
 
@@ -331,7 +336,7 @@ describe("PetSurface", () => {
     fireEvent.pointerCancel(pet, { pointerId: 3 });
     act(() => vi.advanceTimersByTime(500));
 
-    expect(mockStartPetDrag).not.toHaveBeenCalled();
+    expect(mockPetDragBegin).not.toHaveBeenCalled();
   });
 
   it("does not expose the removed drag handle or keyboard activation", () => {

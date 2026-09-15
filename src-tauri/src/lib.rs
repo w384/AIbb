@@ -28,7 +28,8 @@ use commands::settings::{
     clear_api_key, list_available_models, load_settings, save_settings, test_connection,
 };
 use commands::window::{
-    exit_app, open_settings_window, save_pet_position, start_pet_drag, toggle_chat_window,
+    exit_app, open_settings_window, pet_drag_begin, pet_drag_end, pet_drag_move,
+    save_pet_position, toggle_chat_window,
 };
 use domain::BootstrapState;
 use error::AppError;
@@ -114,7 +115,9 @@ pub fn run() {
             toggle_chat_window,
             open_settings_window,
             exit_app,
-            start_pet_drag,
+            pet_drag_begin,
+            pet_drag_move,
+            pet_drag_end,
             save_pet_position,
             load_settings,
             save_settings,
@@ -193,7 +196,9 @@ mod tests {
                 "allow-load-aibb-profile",
                 "allow-toggle-chat-window",
                 "allow-open-settings-window",
-                "allow-start-pet-drag",
+                "allow-pet-drag-begin",
+                "allow-pet-drag-move",
+                "allow-pet-drag-end",
                 "allow-save-pet-position",
                 "allow-open-archive-window"
             ])

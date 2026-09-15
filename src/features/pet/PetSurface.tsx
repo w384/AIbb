@@ -21,7 +21,9 @@ import {
   listenExplorationProgress,
   openArchiveWindow,
   openSettingsWindow,
-  startPetDrag,
+  petDragBegin,
+  petDragEnd,
+  petDragMove,
   toggleChatWindow,
 } from "../../lib/tauri";
 import {
@@ -54,11 +56,17 @@ export function PetSurface({ status }: PetSurfaceProps) {
   });
   const [chatOpenError, setChatOpenError] = useState<string | null>(null);
   const [dragOver, setDragOver] = useState(false);
+  const [dragging, setDragging] = useState(false);
   const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
   const longPressTimer = useRef<number | null>(null);
   const activePointer = useRef<number | null>(null);
   const pressOrigin = useRef<PressOrigin | null>(null);
   const suppressNextClick = useRef(false);
+  // 手动拖动：窗口跟随指针移动（保持透明），pointermove 用 rAF 节流，
+  // 每次只发送最新坐标，避免 IPC 积压。
+  const dragFrame = useRef<number | null>(null);
+  const pendingDragMove = useRef<{ x: number; y: number } | null>(null);
+  const draggingRef = useRef(false);
 
   useEffect(() => {
     let disposed = false;
@@ -120,6 +128,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
     return () => {
       disposed = true;
       clearLongPressTimer();
+      cancelDragFrame();
       unlisteners.forEach((unlisten) => unlisten());
     };
   }, []);
@@ -129,6 +138,25 @@ export function PetSurface({ status }: PetSurfaceProps) {
       window.clearTimeout(longPressTimer.current);
       longPressTimer.current = null;
     }
+  }
+
+  function cancelDragFrame() {
+    if (dragFrame.current !== null) {
+      window.cancelAnimationFrame(dragFrame.current);
+      dragFrame.current = null;
+      pendingDragMove.current = null;
+    }
+  }
+
+  function scheduleDragMove(screenX: number, screenY: number) {
+    pendingDragMove.current = { x: screenX, y: screenY };
+    if (dragFrame.current !== null) return;
+    dragFrame.current = window.requestAnimationFrame(() => {
+      dragFrame.current = null;
+      const pending = pendingDragMove.current;
+      pendingDragMove.current = null;
+      if (pending) void petDragMove(pending.x, pending.y);
+    });
   }
 
   function handlePointerDown(event: ReactPointerEvent<HTMLButtonElement>) {
@@ -145,7 +173,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
     };
     event.currentTarget.setPointerCapture?.(event.pointerId);
     longPressTimer.current = window.setTimeout(() => {
-      beginDrag(event.pointerId);
+      beginDrag(event.pointerId, event.screenX, event.screenY);
     }, LONG_PRESS_MS);
   }
 
@@ -159,24 +187,36 @@ export function PetSurface({ status }: PetSurfaceProps) {
     ) {
       return;
     }
+    if (draggingRef.current) {
+      scheduleDragMove(event.screenX, event.screenY);
+      return;
+    }
     if (
       Math.hypot(event.clientX - origin.x, event.clientY - origin.y) >=
       DRAG_DISTANCE_PX
     ) {
-      beginDrag(event.pointerId);
+      beginDrag(event.pointerId, event.screenX, event.screenY);
     }
   }
 
-  function beginDrag(pointerId: number) {
+  function beginDrag(pointerId: number, screenX: number, screenY: number) {
     if (activePointer.current !== pointerId) return;
     clearLongPressTimer();
     activePointer.current = null;
     pressOrigin.current = null;
     suppressNextClick.current = true;
-    void startPetDrag();
+    draggingRef.current = true;
+    setDragging(true);
+    void petDragBegin(screenX, screenY);
   }
 
   function finishPointer(event: ReactPointerEvent<HTMLButtonElement>) {
+    if (draggingRef.current) {
+      draggingRef.current = false;
+      setDragging(false);
+      cancelDragFrame();
+      void petDragEnd();
+    }
     if (activePointer.current !== event.pointerId) return;
     activePointer.current = null;
     pressOrigin.current = null;
@@ -225,7 +265,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
       {chatOpenError && <p className="pet-error" role="alert">{chatOpenError}</p>}
       <button
         aria-label={profile.name}
-        className="pet"
+        className={`pet${dragging ? " dragging" : ""}`}
         tabIndex={-1}
         title="短按对话，长按拖动，右键设置"
         type="button"
