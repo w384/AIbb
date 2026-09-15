@@ -85,9 +85,10 @@ pub fn pet_window(app: &AppHandle) -> Result<WebviewWindow, AppError> {
         .ok_or_else(|| window_error("find pet window", tauri::Error::WindowNotFound))
 }
 
-/// After a drag ends, snap the pet to the nearest edge of its current
-/// monitor's work area (with a small margin) and always clamp it fully on
-/// screen, so the floating pet never ends up half off the display.
+/// After a drag ends, snap the pet so its round avatar (which is centered in
+/// the window) hugs the nearest edge of its current monitor's work area with
+/// a tiny gap, and always clamp the window so it never ends up fully off the
+/// display.
 pub fn snap_pet_to_work_area_edge(window: &WebviewWindow) -> Result<(), AppError> {
     let position = window
         .outer_position()
@@ -106,7 +107,7 @@ pub fn snap_pet_to_work_area_edge(window: &WebviewWindow) -> Result<(), AppError
         x: position.x,
         y: position.y,
     };
-    let after = snap_position(
+    let after = snap_avatar_position(
         before,
         Size {
             width: i32::try_from(size.width).unwrap_or(44),
@@ -127,11 +128,20 @@ pub fn snap_pet_to_work_area_edge(window: &WebviewWindow) -> Result<(), AppError
     Ok(())
 }
 
-/// Snaps a position to the nearest work-area edge when it ends within
-/// SNAP_MARGIN of one, and otherwise just clamps it fully inside the work
-/// area.
-pub fn snap_position(position: Position, size: Size, work_area: WorkArea) -> Position {
+/// Snaps the pet so its round avatar hugs the chosen work-area edge with a
+/// tiny gap, and otherwise clamps the window fully on screen. The avatar is
+/// drawn centered inside the window (a 40px disc in a 44px window, so its
+/// radius is 20/44 of the window's smaller side). Snapping the avatar instead
+/// of the window edge means the result looks right even if the transparent
+/// window is wider than the avatar: the transparent overhang may sit
+/// off-screen, but the round pet itself lands flush against the edge.
+pub fn snap_avatar_position(position: Position, size: Size, work_area: WorkArea) -> Position {
     const SNAP_MARGIN: i32 = 16;
+
+    let min_side = size.width.min(size.height).max(1);
+    let avatar_radius = ((min_side as f64) * 40.0 / 44.0 / 2.0).round() as i32;
+    let edge_gap = ((min_side as f64) * 2.0 / 44.0).round() as i32;
+
     let max_x = work_area
         .x
         .saturating_add(work_area.width)
@@ -144,16 +154,16 @@ pub fn snap_position(position: Position, size: Size, work_area: WorkArea) -> Pos
         .max(work_area.y);
 
     let x = if position.x <= work_area.x + SNAP_MARGIN {
-        work_area.x
+        work_area.x + avatar_radius + edge_gap - size.width / 2
     } else if position.x >= max_x - SNAP_MARGIN {
-        max_x
+        work_area.x + work_area.width - avatar_radius - edge_gap - size.width / 2
     } else {
         position.x.clamp(work_area.x, max_x)
     };
     let y = if position.y <= work_area.y + SNAP_MARGIN {
-        work_area.y
+        work_area.y + avatar_radius + edge_gap - size.height / 2
     } else if position.y >= max_y - SNAP_MARGIN {
-        max_y
+        work_area.y + work_area.height - avatar_radius - edge_gap - size.height / 2
     } else {
         position.y.clamp(work_area.y, max_y)
     };
@@ -333,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn snaps_to_the_edge_when_the_drag_ends_close_to_it() {
+    fn snaps_the_avatar_to_the_edge_when_the_drag_ends_close_to_it() {
         let area = WorkArea {
             x: 0,
             y: 0,
@@ -344,21 +354,50 @@ mod tests {
             width: 44,
             height: 44,
         };
+        // 44px window: the avatar (radius 20) centered in it lands 2px off
+        // the edge, so the window edge itself stays flush on screen.
         assert_eq!(
-            snap_position(Position { x: 12, y: 400 }, size, area),
+            snap_avatar_position(Position { x: 12, y: 400 }, size, area),
             Position { x: 0, y: 400 }
         );
         assert_eq!(
-            snap_position(Position { x: 400, y: 1040 }, size, area),
+            snap_avatar_position(Position { x: 400, y: 1040 }, size, area),
             Position { x: 400, y: 1036 }
         );
         assert_eq!(
-            snap_position(Position { x: 1900, y: 500 }, size, area),
+            snap_avatar_position(Position { x: 1900, y: 500 }, size, area),
             Position { x: 1876, y: 500 }
         );
         assert_eq!(
-            snap_position(Position { x: 8, y: 8 }, size, area),
+            snap_avatar_position(Position { x: 8, y: 8 }, size, area),
             Position { x: 0, y: 0 }
+        );
+    }
+
+    #[test]
+    fn a_wide_window_snaps_its_centered_avatar_flush_to_the_edge() {
+        let area = WorkArea {
+            x: 0,
+            y: 0,
+            width: 1920,
+            height: 1080,
+        };
+        // A window wider than the avatar (e.g. a platform-forced minimum
+        // size): the avatar still lands 2px from the edge; the transparent
+        // overhang simply sits off-screen.
+        let wide = Size {
+            width: 120,
+            height: 44,
+        };
+        assert_eq!(
+            snap_avatar_position(Position { x: 1850, y: 500 }, wide, area),
+            Position { x: 1838, y: 500 }
+        );
+        // Left edge: the avatar lands 2px from the edge and the transparent
+        // overhang sticks out off-screen.
+        assert_eq!(
+            snap_avatar_position(Position { x: 10, y: 500 }, wide, area),
+            Position { x: -38, y: 500 }
         );
     }
 
@@ -375,11 +414,11 @@ mod tests {
             height: 44,
         };
         assert_eq!(
-            snap_position(Position { x: 600, y: 400 }, size, area),
+            snap_avatar_position(Position { x: 600, y: 400 }, size, area),
             Position { x: 600, y: 400 }
         );
         assert_eq!(
-            snap_position(Position { x: 2100, y: -60 }, size, area),
+            snap_avatar_position(Position { x: 2100, y: -60 }, size, area),
             Position { x: 1876, y: 0 }
         );
     }
