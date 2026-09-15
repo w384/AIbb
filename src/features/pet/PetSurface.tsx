@@ -67,6 +67,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
   const dragFrame = useRef<number | null>(null);
   const pendingDragMove = useRef<{ x: number; y: number } | null>(null);
   const draggingRef = useRef(false);
+  const dragPointerId = useRef<number | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -178,6 +179,13 @@ export function PetSurface({ status }: PetSurfaceProps) {
   }
 
   function handlePointerMove(event: ReactPointerEvent<HTMLButtonElement>) {
+    // 拖动进行中：只认正在拖动的那个指针，把最新屏幕坐标节流后发给后端。
+    if (draggingRef.current) {
+      if (dragPointerId.current === event.pointerId) {
+        scheduleDragMove(event.screenX, event.screenY);
+      }
+      return;
+    }
     const origin = pressOrigin.current;
     if (
       !origin ||
@@ -185,10 +193,6 @@ export function PetSurface({ status }: PetSurfaceProps) {
       activePointer.current !== event.pointerId ||
       (event.buttons & 1) === 0
     ) {
-      return;
-    }
-    if (draggingRef.current) {
-      scheduleDragMove(event.screenX, event.screenY);
       return;
     }
     if (
@@ -202,6 +206,7 @@ export function PetSurface({ status }: PetSurfaceProps) {
   function beginDrag(pointerId: number, screenX: number, screenY: number) {
     if (activePointer.current !== pointerId) return;
     clearLongPressTimer();
+    dragPointerId.current = pointerId;
     activePointer.current = null;
     pressOrigin.current = null;
     suppressNextClick.current = true;
@@ -211,8 +216,9 @@ export function PetSurface({ status }: PetSurfaceProps) {
   }
 
   function finishPointer(event: ReactPointerEvent<HTMLButtonElement>) {
-    if (draggingRef.current) {
+    if (draggingRef.current && dragPointerId.current === event.pointerId) {
       draggingRef.current = false;
+      dragPointerId.current = null;
       setDragging(false);
       cancelDragFrame();
       void petDragEnd();
