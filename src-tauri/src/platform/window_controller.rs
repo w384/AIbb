@@ -109,8 +109,8 @@ pub fn snap_pet_to_work_area_edge(window: &WebviewWindow) -> Result<(), AppError
     let after = snap_position(
         before,
         Size {
-            width: i32::try_from(size.width).unwrap_or(48),
-            height: i32::try_from(size.height).unwrap_or(48),
+            width: i32::try_from(size.width).unwrap_or(44),
+            height: i32::try_from(size.height).unwrap_or(44),
         },
         WorkArea {
             x: work_area.position.x,
@@ -341,8 +341,8 @@ mod tests {
             height: 1080,
         };
         let size = Size {
-            width: 48,
-            height: 48,
+            width: 44,
+            height: 44,
         };
         assert_eq!(
             snap_position(Position { x: 12, y: 400 }, size, area),
@@ -350,11 +350,11 @@ mod tests {
         );
         assert_eq!(
             snap_position(Position { x: 400, y: 1040 }, size, area),
-            Position { x: 400, y: 1032 }
+            Position { x: 400, y: 1036 }
         );
         assert_eq!(
             snap_position(Position { x: 1900, y: 500 }, size, area),
-            Position { x: 1872, y: 500 }
+            Position { x: 1876, y: 500 }
         );
         assert_eq!(
             snap_position(Position { x: 8, y: 8 }, size, area),
@@ -371,8 +371,8 @@ mod tests {
             height: 1080,
         };
         let size = Size {
-            width: 48,
-            height: 48,
+            width: 44,
+            height: 44,
         };
         assert_eq!(
             snap_position(Position { x: 600, y: 400 }, size, area),
@@ -380,7 +380,7 @@ mod tests {
         );
         assert_eq!(
             snap_position(Position { x: 2100, y: -60 }, size, area),
-            Position { x: 1872, y: 0 }
+            Position { x: 1876, y: 0 }
         );
     }
 
