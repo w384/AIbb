@@ -1025,18 +1025,35 @@ impl ExplorationOrchestrator {
             .memory
             .build_context(request.direction.clone().unwrap_or_default())
             .await?;
+        // 上一轮完成出游的四个方向标题（sections）：把它带进这一轮的选题与
+        // 日记写作，让 AIbb 换一条完全不同的路，而不是每次都逛同一片地方。
+        let previous_sections = self
+            .store
+            .load_completed_outings(1)
+            .await?
+            .into_iter()
+            .next()
+            .map(|outing| outing.sections)
+            .unwrap_or_default();
         self.progress(task_id, ExplorationStatus::Choosing).await?;
 
         let web_mode = runtime.web_mode;
         let (raw, web_material, images) = match web_mode {
             WebMode::Off => {
-                self.public_exploration(task_id, context.clone(), &runtime, cancellation.clone())
-                    .await?
+                self.public_exploration(
+                    task_id,
+                    context.clone(),
+                    &previous_sections,
+                    &runtime,
+                    cancellation.clone(),
+                )
+                .await?
             }
             WebMode::Auto | WebMode::Force => {
                 self.progress(task_id, ExplorationStatus::NativeSearching)
                     .await?;
-                let prompt = build_exploration_prompt(context.clone(), WebMaterial::empty());
+                let prompt =
+                    build_exploration_prompt(context.clone(), WebMaterial::empty(), &previous_sections);
                 match runtime
                     .llm
                     .try_native_web(
@@ -1050,8 +1067,14 @@ impl ExplorationOrchestrator {
                     Ok(NativeWebOutcome::Completed { sources, .. })
                         if sources.is_empty() && web_mode == WebMode::Auto =>
                     {
-                        self.public_exploration(task_id, context, &runtime, cancellation.clone())
-                            .await?
+                        self.public_exploration(
+                            task_id,
+                            context,
+                            &previous_sections,
+                            &runtime,
+                            cancellation.clone(),
+                        )
+                        .await?
                     }
                     Ok(NativeWebOutcome::Completed { text, sources }) => {
                         let pages = sources
@@ -1075,14 +1098,26 @@ impl ExplorationOrchestrator {
                         (text, WebMaterial { pages }, Vec::new())
                     }
                     Ok(NativeWebOutcome::Unsupported) if web_mode == WebMode::Auto => {
-                        self.public_exploration(task_id, context, &runtime, cancellation.clone())
-                            .await?
+                        self.public_exploration(
+                            task_id,
+                            context,
+                            &previous_sections,
+                            &runtime,
+                            cancellation.clone(),
+                        )
+                        .await?
                     }
                     Err(error)
                         if web_mode == WebMode::Auto && is_native_capability_error(&error) =>
                     {
-                        self.public_exploration(task_id, context, &runtime, cancellation.clone())
-                            .await?
+                        self.public_exploration(
+                            task_id,
+                            context,
+                            &previous_sections,
+                            &runtime,
+                            cancellation.clone(),
+                        )
+                        .await?
                     }
                     Ok(NativeWebOutcome::Unsupported) => {
                         return Err(AppError::from_code(ErrorCode::NativeWebUnsupported));
@@ -1144,6 +1179,7 @@ impl ExplorationOrchestrator {
             &result,
             &web_material,
             request.direction.as_deref(),
+            &previous_sections,
             &runtime,
             cancellation.clone(),
         ).await?;
@@ -1194,6 +1230,7 @@ impl ExplorationOrchestrator {
         result: &ExplorationResult,
         web_material: &WebMaterial,
         direction: Option<&str>,
+        previous_sections: &[String],
         runtime: &ExplorationTaskRuntime,
         cancellation: CancellationToken,
     ) -> Result<OutingDiary, AppError> {
@@ -1201,7 +1238,13 @@ impl ExplorationOrchestrator {
         runtime
             .llm
             .stream_chat(
-                build_outing_diary_request(result, web_material, direction, &runtime.persona),
+                build_outing_diary_request(
+                    result,
+                    web_material,
+                    direction,
+                    &runtime.persona,
+                    previous_sections,
+                ),
                 &first,
                 cancellation.clone(),
             )
@@ -1226,6 +1269,7 @@ impl ExplorationOrchestrator {
         &self,
         task_id: Uuid,
         context: MemoryContext,
+        previous_sections: &[String],
         task_runtime: &ExplorationTaskRuntime,
         cancellation: CancellationToken,
     ) -> Result<(String, WebMaterial, Vec<ExplorationImage>), AppError> {
@@ -1327,7 +1371,7 @@ impl ExplorationOrchestrator {
 
         self.progress(task_id, ExplorationStatus::Writing).await?;
         let web_material = WebMaterial { pages };
-        let prompt = build_exploration_prompt(context, web_material.clone());
+        let prompt = build_exploration_prompt(context, web_material.clone(), previous_sections);
         let raw = task_runtime
             .llm
             .complete(prompt_as_chat_request(&prompt), cancellation)
