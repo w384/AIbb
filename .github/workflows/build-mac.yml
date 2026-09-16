@@ -3,7 +3,7 @@ name: build-macos
 on:
   workflow_dispatch:
   push:
-    branches: [feature/aibb-desktop-pet]
+    branches: [main]
     tags: ["v*"]
 
 permissions:
