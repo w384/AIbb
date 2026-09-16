@@ -2,6 +2,15 @@
 
 > 一只会聊天、会自己出去「玩」、还会帮你整理文件的桌面 AI 伙伴。
 
+<p align="center">
+  <a href="https://github.com/w384/AIbb/actions/workflows/build-windows.yml">
+    <img src="https://github.com/w384/AIbb/actions/workflows/build-windows.yml/badge.svg" alt="Windows build" />
+  </a>
+  <a href="https://github.com/w384/AIbb/actions/workflows/build-mac.yml">
+    <img src="https://github.com/w384/AIbb/actions/workflows/build-mac.yml/badge.svg" alt="macOS build" />
+  </a>
+</p>
+
 AIbb 是一只常驻 Windows 桌面的 AI 宠物。它不只是聊天机器人：你说「去玩」，它会自己去中文科学论坛、前沿资讯里探索一圈，回来给你写一篇见闻日记；你把文件拖到它身上，它会按你的规则自动归档整理。所有对话、记忆、归档记录都只保存在这台电脑上。
 
 ## 为什么是 AIbb
@@ -36,8 +45,8 @@ AIbb 是一只常驻 Windows 桌面的 AI 宠物。它不只是聊天机器人�
 
 ## 安装
 
-- **正式安装包**：从 Release 下载 `AIbb_x64-setup.exe`（NSIS，简体中文向导）或 `AIbb_x64_zh-CN.msi` 安装。
-- **macOS**：从 Release 下载 `.dmg`（当前由 GitHub Actions 在 tag 时自动构建）。
+- **正式安装包**：从 Release 下载 `AIbb_x64-setup.exe`（NSIS，简体中文向导）或 `AIbb_x64_zh-CN.msi` 安装。打 `v*` 标签后由 CI 自动构建并发布。
+- **macOS**：从 Release 下载 `.dmg`（Apple Silicon，当前由 GitHub Actions 在 tag 时自动构建）。
 - **从源码构建**（需要 Rust 1.80+ 与 pnpm）：
 
 ```bash
@@ -45,7 +54,17 @@ pnpm install
 pnpm tauri build        # 产物在 src-tauri/target/release/bundle/
 ```
 
+> 没有正式 Release 时，也可以从仓库 **Actions → build-windows → Artifacts** 下载最新构建的安装包。
 > 安装后首次打开如遇 SmartScreen「未知发布者」提示，点「更多信息 → 仍要运行」即可（正式发布会补代码签名）。
+
+## 构建状态
+
+| 平台 | 工作流 | 内容 |
+| --- | --- | --- |
+| Windows | [build-windows](.github/workflows/build-windows.yml) | 前端/Rust 测试 + NSIS 安装包 |
+| macOS | [build-mac](.github/workflows/build-mac.yml) | 前端/Rust 测试 + dmg |
+
+每次推送到 `feature/aibb-desktop-pet` 都会自动跑两个平台的测试与编译；打 `v*` 标签时额外打包安装包并发布到 Release。
 
 ## 开发
 
@@ -67,10 +86,10 @@ cargo test --manifest-path src-tauri/Cargo.toml   # Rust 全量测试
 
 ## 自动化构建
 
-仓库内置 `.github/workflows/build-mac.yml`：手动触发，或在推送 `v*` tag 时自动在 macOS runner 上构建并发布 `.dmg`（未签名）。
+仓库内置 `.github/workflows/build-windows.yml`（Windows：测试 + NSIS 安装包）与 `.github/workflows/build-mac.yml`（macOS：测试 + dmg）：手动触发，或在推送 `v*` tag 时自动构建并发布安装包。
 
 ```bash
-git tag v0.1.1 && git push origin v0.1.1   # 触发 macOS 自动构建 + Release
+git tag v0.1.1 && git push origin v0.1.1   # 触发 Windows + macOS 自动构建 + Release
 ```
 
 ## 隐私与数据
