@@ -225,8 +225,9 @@ fn shortcut_candidates() -> Vec<PathBuf> {
                 .join("AIbb.lnk"),
         );
     }
-    // 兜底：扫描桌面与开始菜单里所有文件名含 AIbb 的快捷方式，覆盖安装器
-    // 自定义了快捷方式名（或用户改名）的场景，保证新装后头像也能同步。
+    // 兜底：扫描桌面与开始菜单里所有文件名含 AIbb 的快捷方式（大小写不敏感，
+    // 覆盖「aibb-desktop-pet.exe - 快捷方式」这类发送到桌面/安装器自定义命名），
+    // 保证新装或改名后头像也能同步。
     for folder in [
         std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("Desktop")),
         std::env::var_os("USERPROFILE")
@@ -251,9 +252,11 @@ fn shortcut_candidates() -> Vec<PathBuf> {
             for entry in entries.flatten() {
                 let path = entry.path();
                 if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lnk"))
-                    && path
-                        .file_stem()
-                        .is_some_and(|stem| stem.to_string_lossy().contains("AIbb"))
+                    && path.file_stem().is_some_and(|stem| {
+                        stem.to_string_lossy()
+                            .to_ascii_lowercase()
+                            .contains("aibb")
+                    })
                 {
                     candidates.push(path);
                 }
