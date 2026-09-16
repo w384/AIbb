@@ -46,13 +46,15 @@ pub struct AvatarIconAssets {
 }
 
 /// Decode the normalized WebP avatar and render the tray PNG plus the
-/// multi-size shortcut ICO.
+/// multi-size shortcut ICO. The avatar is clipped to a circle (transparent
+/// corners) so the pet identity stays round everywhere it appears — tray,
+/// taskbar, shortcuts — matching the round pet itself.
 pub fn render_avatar_assets(webp: &[u8]) -> Result<AvatarIconAssets, AppError> {
     let image = decode_avatar(webp)?;
-    let tray_png = encode_png(&resize(&image, TRAY_ICON_SIZE))?;
+    let tray_png = encode_png(&to_circle(&resize(&image, TRAY_ICON_SIZE)))?;
     let mut shortcut_pngs = Vec::with_capacity(SHORTCUT_ICON_SIZES.len());
     for size in SHORTCUT_ICON_SIZES {
-        shortcut_pngs.push((size, encode_png(&resize(&image, size))?));
+        shortcut_pngs.push((size, encode_png(&to_circle(&resize(&image, size)))?));
     }
     Ok(AvatarIconAssets {
         tray_png,
@@ -202,11 +204,91 @@ fn shortcut_candidates() -> Vec<PathBuf> {
             candidates.push(home.join("OneDrive").join("Desktop").join("AIbb.lnk"));
         }
     }
+    // 开始菜单快捷方式（用户级 + 全体用户级）。
+    if let Some(app_data) = std::env::var_os("APPDATA") {
+        candidates.push(
+            PathBuf::from(app_data)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("AIbb.lnk"),
+        );
+    }
+    if let Some(program_data) = std::env::var_os("PROGRAMDATA") {
+        candidates.push(
+            PathBuf::from(program_data)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+                .join("AIbb.lnk"),
+        );
+    }
+    // 兜底：扫描桌面与开始菜单里所有文件名含 AIbb 的快捷方式，覆盖安装器
+    // 自定义了快捷方式名（或用户改名）的场景，保证新装后头像也能同步。
+    for folder in [
+        std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("Desktop")),
+        std::env::var_os("USERPROFILE")
+            .map(|home| PathBuf::from(home).join("OneDrive").join("Desktop")),
+        std::env::var_os("APPDATA").map(|app_data| {
+            PathBuf::from(app_data)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+        }),
+        std::env::var_os("PROGRAMDATA").map(|program_data| {
+            PathBuf::from(program_data)
+                .join("Microsoft")
+                .join("Windows")
+                .join("Start Menu")
+                .join("Programs")
+        }),
+    ] {
+        let Some(folder) = folder else { continue };
+        if let Ok(entries) = std::fs::read_dir(&folder) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lnk"))
+                    && path
+                        .file_stem()
+                        .is_some_and(|stem| stem.to_string_lossy().contains("AIbb"))
+                {
+                    candidates.push(path);
+                }
+            }
+        }
+    }
     candidates
 }
 
 fn resize(image: &image::DynamicImage, size: u32) -> image::RgbaImage {
     image.resize_exact(size, size, FilterType::Lanczos3).to_rgba8()
+}
+
+/// Clip a square image to a circle: pixels outside the inscribed circle become
+/// fully transparent, and the rim gets a 1px soft edge so scaled-down icons do
+/// not show jagged corners.
+fn to_circle(image: &image::RgbaImage) -> image::RgbaImage {
+    let (width, height) = image.dimensions();
+    let radius = width.min(height) as f64 / 2.0;
+    let center_x = width as f64 / 2.0;
+    let center_y = height as f64 / 2.0;
+    let mut out = image.clone();
+    for (x, y, pixel) in out.enumerate_pixels_mut() {
+        let dx = x as f64 + 0.5 - center_x;
+        let dy = y as f64 + 0.5 - center_y;
+        let distance = (dx * dx + dy * dy).sqrt();
+        let alpha = if distance > radius {
+            0.0
+        } else {
+            (radius - distance).min(1.0) // 1px antialiased rim
+        };
+        let a = pixel.0[3] as f64 * alpha;
+        pixel.0[3] = a.round() as u8;
+    }
+    out
 }
 
 fn encode_png(image: &image::RgbaImage) -> Result<Vec<u8>, AppError> {
@@ -322,6 +404,25 @@ mod tests {
             assert_eq!(bytes_in_res, next - offset, "entry {index} size");
         }
         assert_eq!(seen_sizes, SHORTCUT_ICON_SIZES.to_vec());
+    }
+
+    #[test]
+    fn avatar_assets_are_clipped_to_a_circle() {
+        let assets = render_avatar_assets(&sample_webp()).unwrap();
+
+        let tray = image::load_from_memory(&assets.tray_png)
+            .unwrap()
+            .to_rgba8();
+        assert_eq!((tray.width(), tray.height()), (32, 32));
+        // 中心像素保留不透明。
+        assert_eq!(tray.get_pixel(16, 16).0[3], 255);
+        // 四个角落完全透明：头像被剪裁成圆形。
+        assert_eq!(tray.get_pixel(0, 0).0[3], 0);
+        assert_eq!(tray.get_pixel(31, 0).0[3], 0);
+        assert_eq!(tray.get_pixel(0, 31).0[3], 0);
+        assert_eq!(tray.get_pixel(31, 31).0[3], 0);
+        // 圆边缘像素被抗锯齿软化，不是生硬的 0/255 跳变。
+        assert!(tray.get_pixel(0, 16).0[3] < 255);
     }
 
     #[test]
