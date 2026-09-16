@@ -174,27 +174,55 @@ fn set_tray_icon<R: Runtime>(app: &AppHandle<R>, png: Option<&[u8]>) {
 /// any failure is ignored so icon polish never breaks the app.
 #[cfg(windows)]
 fn update_shortcut_icon(ico: Option<&Path>) {
-    for shortcut in shortcut_candidates() {
-        if !shortcut.exists() {
-            continue;
-        }
+    let candidates: Vec<PathBuf> = shortcut_candidates()
+        .into_iter()
+        .filter(|path| path.exists())
+        .collect();
+    if candidates.is_empty() {
+        return;
+    }
+    let icon_ps = ico
+        .map(|path| path.to_string_lossy().replace('\'', "''"))
+        .unwrap_or_default();
+    // One PowerShell pass: re-point every shortcut at the avatar ICO, then tell
+    // the shell the icons changed. Without the SHChangeNotify calls Windows
+    // keeps showing the cached icon even after avatar.ico is rewritten — the
+    // tray (a live PNG) updates, the desktop shortcut does not.
+    let mut script = String::new();
+    script.push_str(
+        "Add-Type -TypeDefinition @\"\n\
+         using System;\n\
+         using System.Runtime.InteropServices;\n\
+         public static class ShellIconRefresh {\n\
+           [DllImport(\"shell32.dll\", CharSet = CharSet.Unicode)]\n\
+           public static extern void SHChangeNotify(int wEventId, uint wFlags, IntPtr dwItem1, IntPtr dwItem2);\n\
+         }\n\
+         \"@;\n\
+         $sh = New-Object -ComObject WScript.Shell;\n",
+    );
+    for shortcut in &candidates {
         let shortcut_ps = shortcut.to_string_lossy().replace('\'', "''");
-        let icon_ps = ico
-            .map(|path| path.to_string_lossy().replace('\'', "''"))
-            .unwrap_or_default();
-        let script = format!(
-            "$sh = New-Object -ComObject WScript.Shell; \
-             $sc = $sh.CreateShortcut('{shortcut_ps}'); \
+        script.push_str(&format!(
+            "$sc = $sh.CreateShortcut('{shortcut_ps}'); \
              $sc.IconLocation = '{icon_ps}'; \
-             $sc.Save()",
+             $sc.Save();\n",
             shortcut_ps = shortcut_ps,
             icon_ps = icon_ps,
-        );
-        let _ = std::process::Command::new("powershell.exe")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
-            .output();
+        ));
+        script.push_str(&format!(
+            "$ptr = [System.Runtime.InteropServices.Marshal]::StringToHGlobalUni('{shortcut_ps}'); \
+             [ShellIconRefresh]::SHChangeNotify(0x00000010, 0x0001, $ptr, [IntPtr]::Zero); \
+             [System.Runtime.InteropServices.Marshal]::FreeHGlobal($ptr);\n",
+            shortcut_ps = shortcut_ps,
+        ));
     }
+    script.push_str(
+        "[ShellIconRefresh]::SHChangeNotify(0x08000000, 0, [IntPtr]::Zero, [IntPtr]::Zero);\n",
+    );
+    let _ = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-NonInteractive", "-Command", &script])
+        .creation_flags(0x0800_0000) // CREATE_NO_WINDOW
+        .output();
 }
 
 #[cfg(not(windows))]
