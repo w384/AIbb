@@ -52,13 +52,18 @@ pub struct AvatarIconAssets {
 pub fn render_avatar_assets(webp: &[u8]) -> Result<AvatarIconAssets, AppError> {
     let image = decode_avatar(webp)?;
     let tray_png = encode_png(&to_circle(&resize(&image, TRAY_ICON_SIZE)))?;
-    let mut shortcut_pngs = Vec::with_capacity(SHORTCUT_ICON_SIZES.len());
+    let mut shortcut_frames = Vec::with_capacity(SHORTCUT_ICON_SIZES.len());
     for size in SHORTCUT_ICON_SIZES {
-        shortcut_pngs.push((size, encode_png(&to_circle(&resize(&image, size)))?));
+        shortcut_frames.push((size, to_circle(&resize(&image, size))));
     }
     Ok(AvatarIconAssets {
         tray_png,
-        shortcut_ico: encode_png_ico(&shortcut_pngs)?,
+        shortcut_ico: encode_png_ico(
+            &shortcut_frames
+                .iter()
+                .map(|(size, frame)| (*size, frame))
+                .collect::<Vec<_>>(),
+        )?,
     })
 }
 
@@ -86,6 +91,8 @@ pub fn apply_avatar_icons<R: Runtime>(app: &AppHandle<R>, directory: &Path, webp
                 Ok((_, ico_path)) => {
                     set_tray_icon(app, Some(&assets.tray_png));
                     apply_window_icons(app, Some(&assets.tray_png));
+                    #[cfg(windows)]
+                    normalize_desktop_shortcut_name();
                     update_shortcut_icon(Some(&ico_path));
                 }
                 Err(_) => {
@@ -192,6 +199,46 @@ fn update_shortcut_icon(ico: Option<&Path>) {
 
 #[cfg(not(windows))]
 fn update_shortcut_icon(_ico: Option<&Path>) {}
+
+/// 换头像同步时，把桌面上指向本应用的快捷方式规范命名为 `AIbb.lnk`
+/// （若尚不存在同名），让桌面图标名跟随产品名，而不是
+/// `aibb-desktop-pet.exe - 快捷方式` 这类系统默认命名。
+#[cfg(windows)]
+fn normalize_desktop_shortcut_name() {
+    let folders = [
+        std::env::var_os("USERPROFILE").map(|home| PathBuf::from(home).join("Desktop")),
+        std::env::var_os("USERPROFILE")
+            .map(|home| PathBuf::from(home).join("OneDrive").join("Desktop")),
+    ];
+    let mut already_named = false;
+    let mut rename_target: Option<PathBuf> = None;
+    for folder in folders.into_iter().flatten() {
+        let Ok(entries) = std::fs::read_dir(&folder) else { continue };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if !path.extension().is_some_and(|ext| ext.eq_ignore_ascii_case("lnk")) {
+                continue;
+            }
+            let stem = path
+                .file_stem()
+                .map(|stem| stem.to_string_lossy().to_ascii_lowercase());
+            match stem.as_deref() {
+                Some("aibb") => already_named = true,
+                Some(stem) if stem.contains("aibb") && rename_target.is_none() => {
+                    rename_target = Some(path);
+                }
+                _ => {}
+            }
+        }
+    }
+    if !already_named {
+        if let Some(path) = rename_target {
+            if let Some(folder) = path.parent() {
+                let _ = std::fs::rename(&path, folder.join("AIbb.lnk"));
+            }
+        }
+    }
+}
 
 #[cfg(windows)]
 fn shortcut_candidates() -> Vec<PathBuf> {
@@ -308,22 +355,31 @@ fn encode_png(image: &image::RgbaImage) -> Result<Vec<u8>, AppError> {
     Ok(buffer)
 }
 
-/// Pack PNG-encoded frames into a single ICO container. Modern Windows
-/// (Vista+) renders PNG-compressed icon entries, so no BMP conversion is
-/// needed and arbitrary sizes are supported.
-fn encode_png_ico(pngs: &[(u32, Vec<u8>)]) -> Result<Vec<u8>, AppError> {
-    if pngs.is_empty() || pngs.len() > u16::MAX as usize {
+/// Pack the rendered frames into a single ICO container.
+///
+/// Frames are stored as 32-bit BGRA bitmaps (BITMAPINFOHEADER + XOR + AND
+/// mask), not PNG: Windows' shortcut-icon pipeline handles PNG frames poorly —
+/// the transparent corners of a round avatar come out as a square opaque
+/// background — while 32-bit DIB frames natively render the alpha channel, so
+/// the round avatar stays round on the desktop.
+fn encode_png_ico(frames: &[(u32, &image::RgbaImage)]) -> Result<Vec<u8>, AppError> {
+    if frames.is_empty() || frames.len() > u16::MAX as usize {
         return Err(icon_error("invalid icon size list"));
     }
+    let encoded = frames
+        .iter()
+        .map(|(size, image)| Ok(encode_bmp_frame(*size, image)))
+        .collect::<Result<Vec<_>, AppError>>()?;
+
     let mut ico = Vec::with_capacity(
-        6 + 16 * pngs.len() + pngs.iter().map(|(_, bytes)| bytes.len()).sum::<usize>(),
+        6 + 16 * frames.len() + encoded.iter().map(|bytes| bytes.len()).sum::<usize>(),
     );
     ico.extend_from_slice(&0u16.to_le_bytes()); // reserved
     ico.extend_from_slice(&1u16.to_le_bytes()); // type: icon
-    ico.extend_from_slice(&(pngs.len() as u16).to_le_bytes());
+    ico.extend_from_slice(&(frames.len() as u16).to_le_bytes());
 
-    let mut offset = 6 + 16 * pngs.len() as u32;
-    for (size, bytes) in pngs {
+    let mut offset = 6 + 16 * frames.len() as u32;
+    for ((size, _), bytes) in frames.iter().zip(&encoded) {
         let dimension = (*size).min(256) as u8; // 0 means 256
         ico.extend_from_slice(&[dimension, dimension, 0, 0]); // width, height, colors, reserved
         ico.extend_from_slice(&1u16.to_le_bytes()); // planes
@@ -332,10 +388,36 @@ fn encode_png_ico(pngs: &[(u32, Vec<u8>)]) -> Result<Vec<u8>, AppError> {
         ico.extend_from_slice(&offset.to_le_bytes()); // image offset
         offset += bytes.len() as u32;
     }
-    for (_, bytes) in pngs {
+    for bytes in &encoded {
         ico.extend_from_slice(bytes);
     }
     Ok(ico)
+}
+
+/// Encode one icon frame as a 32-bit DIB bitmap: 40-byte BITMAPINFOHEADER,
+/// bottom-up BGRA rows, then an all-zero AND mask. The alpha channel travels
+/// natively, so transparent corners survive Windows' icon pipeline.
+fn encode_bmp_frame(size: u32, image: &image::RgbaImage) -> Vec<u8> {
+    let mut bmp = Vec::with_capacity(40 + (size * size * 4) as usize + 0);
+    bmp.extend_from_slice(&40u32.to_le_bytes()); // biSize
+    bmp.extend_from_slice(&size.to_le_bytes()); // biWidth
+    bmp.extend_from_slice(&(size * 2).to_le_bytes()); // biHeight: XOR + AND
+    bmp.extend_from_slice(&1u16.to_le_bytes()); // biPlanes
+    bmp.extend_from_slice(&32u16.to_le_bytes()); // biBitCount
+    bmp.extend_from_slice(&[0; 20]); // biCompression(BI_RGB), biSizeImage, ppm, clr used/important
+    for y in (0..size).rev() {
+        for x in 0..size {
+            let pixel = image.get_pixel(x, y);
+            bmp.push(pixel.0[2]); // B
+            bmp.push(pixel.0[1]); // G
+            bmp.push(pixel.0[0]); // R
+            bmp.push(pixel.0[3]); // A
+        }
+    }
+    // AND mask: everything from the XOR plane is already alpha-driven.
+    let and_row = ((size as usize + 31) / 32) * 4;
+    bmp.extend(std::iter::repeat(0u8).take(and_row * size as usize));
+    bmp
 }
 
 fn decode_avatar(bytes: &[u8]) -> Result<image::DynamicImage, AppError> {
@@ -390,11 +472,25 @@ mod tests {
                 ico[entry + 14],
                 ico[entry + 15],
             ]) as usize;
+            // Every frame must be a 32-bit DIB bitmap, not a PNG: the shortcut
+            // icon pipeline needs the native alpha channel to stay round.
             assert_eq!(
-                &ico[offset..offset + 4],
-                &[0x89, b'P', b'N', b'G'],
-                "icon entry {index} must embed a PNG frame"
+                u32::from_le_bytes([ico[offset], ico[offset + 1], ico[offset + 2], ico[offset + 3]]),
+                40,
+                "entry {index} must start with a BITMAPINFOHEADER"
             );
+            assert_eq!(
+                u16::from_le_bytes([ico[offset + 14], ico[offset + 15]]),
+                32,
+                "entry {index} must be 32-bit BGRA"
+            );
+            let xor_height = u32::from_le_bytes([
+                ico[offset + 8],
+                ico[offset + 9],
+                ico[offset + 10],
+                ico[offset + 11],
+            ]) / 2;
+            assert_eq!(xor_height, size, "entry {index} XOR height");
             seen_sizes.push(size);
             offsets.push(offset);
         }
