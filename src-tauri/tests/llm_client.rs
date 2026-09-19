@@ -117,6 +117,7 @@ fn settings(api_base: String) -> ApiSettings {
         always_on_top: false,
         autostart: false,
         persona: String::new(),
+        vocab_env: String::new(),
         api_configured: true,
     }
 }
@@ -944,6 +945,7 @@ async fn settings_does_not_mark_connection_verified_after_failed_authentication(
             always_on_top: false,
             autostart: false,
             persona: String::new(),
+            vocab_env: String::new(),
         })
         .await
         .unwrap();
@@ -975,6 +977,7 @@ async fn settings_marks_connection_verified_after_valid_models_response() {
             always_on_top: false,
             autostart: false,
             persona: String::new(),
+            vocab_env: String::new(),
         })
         .await
         .unwrap();

@@ -19,10 +19,12 @@ import type {
   ExplorationPageReadEvent,
   ExplorationProgressEvent,
   ExplorationQueryEvent,
+  HistoryMessage,
   InputDisposition,
   OutingStats,
   SaveArchiveSettings,
   SaveSettings,
+  VocabExportResult,
 } from "../contracts";
 
 type PayloadListener<T> = (payload: T) => void;
@@ -70,6 +72,28 @@ export function submitUserInput(
   requestId: string,
 ): Promise<InputDisposition> {
   return invoke("submit_user_input", { message, requestId });
+}
+
+/** Sends a term to the vocabulary assistant (no outing-intent routing). */
+export function submitVocabInput(
+  message: string,
+  requestId: string,
+): Promise<void> {
+  return invoke("submit_vocab_input", { message, requestId });
+}
+
+/** Recent vocabulary-assistant messages (vocab channel only). */
+export function loadVocabHistory(limit?: number): Promise<HistoryMessage[]> {
+  return invoke("load_vocab_history", { limit });
+}
+
+/** Tells the model to tidy the glossary into a table and writes it to disk. */
+export function exportVocabGlossary(): Promise<VocabExportResult> {
+  return invoke("export_vocab_glossary");
+}
+
+export function clearVocabMemory(): Promise<void> {
+  return invoke("clear_vocab_memory");
 }
 
 export function loadSettings(): Promise<ApiSettings> {
@@ -146,6 +170,11 @@ export const listenExplorationError = (
 ) => listenFor("exploration://error", listener);
 export const listenProfileUpdated = (listener: PayloadListener<AibbProfile>) =>
   listenFor("profile://updated", listener);
+
+/** Fired by the host when the pet click shows the chat window again, so the
+ * window can land on the mode chooser (普通对话 / 词汇助手). */
+export const listenChatOpened = (listener: () => void) =>
+  listenFor<void>("chat://opened", listener);
 
 /** Window focus changes (true = focused) — used to land at the latest
  * message whenever the chat window is activated again. */

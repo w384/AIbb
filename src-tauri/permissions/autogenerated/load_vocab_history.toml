@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-load-vocab-history"
+description = "Enables the load_vocab_history command without any pre-configured scope."
+commands.allow = ["load_vocab_history"]
+
+[[permission]]
+identifier = "deny-load-vocab-history"
+description = "Denies the load_vocab_history command without any pre-configured scope."
+commands.deny = ["load_vocab_history"]

@@ -15,6 +15,9 @@
     "allow-submit-user-input",
     "allow-archive-files",
     "allow-take-pending-archive-paths",
-    "allow-archive-ledger"
+    "allow-archive-ledger",
+    "allow-submit-vocab-input",
+    "allow-load-vocab-history",
+    "allow-export-vocab-glossary"
   ]
 }

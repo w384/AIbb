@@ -15,6 +15,7 @@ pub struct AppState {
     pub memory: MemoryRepository,
     pub archive: ArchiveService,
     pub chat: Option<ChatService>,
+    pub vocab: Option<ChatService>,
     pub exploration: Option<ExplorationOrchestrator>,
 }
 
@@ -31,6 +32,7 @@ impl AppState {
             memory,
             archive,
             chat: None,
+            vocab: None,
             exploration: None,
         }
     }
@@ -53,10 +55,12 @@ impl AppState {
         memory: MemoryRepository,
         archive: ArchiveService,
         chat: ChatService,
+        vocab: ChatService,
         exploration: ExplorationOrchestrator,
     ) -> Self {
         let mut state = Self::with_exploration(bootstrap, settings, memory, archive, exploration);
         state.chat = Some(chat);
+        state.vocab = Some(vocab);
         state
     }
 }

@@ -31,6 +31,9 @@ pub struct ApiSettings {
     pub autostart: bool,
     /// Custom personality (「性格定制」) injected into chat prompts.
     pub persona: String,
+    /// Custom environment/domain for the vocabulary assistant (词汇助手大环境).
+    /// Empty means the built-in default (Agent-LLM 开发).
+    pub vocab_env: String,
     pub api_configured: bool,
 }
 
@@ -44,6 +47,7 @@ pub struct SaveSettings {
     pub always_on_top: bool,
     pub autostart: bool,
     pub persona: String,
+    pub vocab_env: String,
 }
 
 pub struct ExplorationTaskSnapshot {
@@ -122,6 +126,7 @@ impl SettingsService {
             always_on_top: persisted.always_on_top,
             autostart: persisted.autostart,
             persona: persisted.persona,
+            vocab_env: persisted.vocab_env,
             api_configured,
         })
     }
@@ -235,6 +240,7 @@ impl SettingsService {
                 always_on_top: persisted.always_on_top,
                 autostart: persisted.autostart,
                 persona: persisted.persona,
+                vocab_env: persisted.vocab_env,
                 api_configured: api_key.as_ref().is_some_and(|key| !key.is_empty()),
             },
             api_key,
@@ -247,6 +253,7 @@ impl SettingsService {
         let model = settings.model.trim().to_string();
         validate_required_settings(&api_base, &model)?;
         let persona = validate_persona(settings.persona)?;
+        let vocab_env = validate_vocab_env(settings.vocab_env)?;
         let replacement_key = settings.api_key.and_then(normalize_replacement_key);
         let previous = self.database.load_settings()?;
         self.database.save_settings(
@@ -256,6 +263,7 @@ impl SettingsService {
             settings.always_on_top,
             settings.autostart,
             &persona,
+            &vocab_env,
         )?;
 
         if let Some(api_key) = replacement_key {
@@ -269,6 +277,7 @@ impl SettingsService {
                         previous.always_on_top,
                         previous.autostart,
                         &previous.persona,
+                        &previous.vocab_env,
                     )
                     .is_err()
                 {
@@ -301,6 +310,7 @@ impl SettingsService {
             always_on_top: persisted.always_on_top,
             autostart: persisted.autostart,
             persona: persisted.persona,
+            vocab_env: persisted.vocab_env,
             api_configured: false,
         };
         let api_key = self
@@ -331,6 +341,7 @@ impl SettingsService {
             always_on_top: persisted.always_on_top,
             autostart: persisted.autostart,
             persona: persisted.persona,
+            vocab_env: persisted.vocab_env,
             api_configured: false,
         };
         let api_key = self
@@ -427,6 +438,18 @@ fn validate_persona(persona: String) -> Result<String, AppError> {
         ));
     }
     Ok(persona)
+}
+
+/// Trim and bound the vocabulary assistant's environment description.
+fn validate_vocab_env(vocab_env: String) -> Result<String, AppError> {
+    let vocab_env = vocab_env.trim().to_string();
+    if vocab_env.chars().count() > 500 {
+        return Err(AppError::new(
+            "invalidSettings",
+            "词汇助手大环境不能超过 500 字，请精简后再保存。",
+        ));
+    }
+    Ok(vocab_env)
 }
 
 fn credential_store_access_error() -> AppError {

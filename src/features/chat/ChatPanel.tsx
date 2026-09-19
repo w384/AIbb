@@ -20,15 +20,19 @@ import type {
   ExplorationStatus,
   OutingStats,
   OutingTimelineMessage,
+  VocabExportResult,
 } from "../../contracts";
 import {
+  exportVocabGlossary,
   getBootstrapState,
   loadAibbProfile,
   loadChatHistory,
   loadOutingStats,
+  loadVocabHistory,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenChatOpened,
   listenChatWindowFocus,
   listenExplorationComplete,
   listenExplorationDiaryDelta,
@@ -39,6 +43,7 @@ import {
   listenProfileUpdated,
   openSettingsWindow,
   submitUserInput,
+  submitVocabInput,
 } from "../../lib/tauri";
 
 const FIRST_RUN_GREETING =
@@ -48,6 +53,15 @@ const DEFAULT_PROFILE: AibbProfile = {
   avatarDataUrl: null,
   version: 0,
 };
+
+/** Which assistant the chat window is in. `null` shows the mode chooser. */
+type ChatMode = "chat" | "vocab";
+
+interface ChatPanelProps {
+  /** Initial mode; the real app starts on the chooser (`null`). Tests can
+   * jump straight into a mode. */
+  defaultMode?: ChatMode | null;
+}
 
 interface ChatMessageView {
   id: string;
@@ -284,9 +298,17 @@ function newerOutingMessage(
 function ChatHeader({
   profile,
   totalOutings,
+  mode,
+  onSwitchMode,
+  onExport,
+  exporting,
 }: {
   profile: AibbProfile;
   totalOutings: number | null;
+  mode?: ChatMode | null;
+  onSwitchMode?: () => void;
+  onExport?: () => void;
+  exporting?: boolean;
 }) {
   return (
     <header className="chat-header">
@@ -294,10 +316,14 @@ function ChatHeader({
         <AibbAvatar avatarDataUrl={profile.avatarDataUrl} name={profile.name} />
       </span>
       <div className="chat-identity">
-        <h1>{profile.name}</h1>
+        <h1>
+          {mode === "vocab" ? "词汇助手" : profile.name}
+          {mode === "vocab" && <span className="chat-mode-badge">📚</span>}
+        </h1>
         <p>
-          <span className="online-dot" aria-hidden="true" />准备出去玩
-          {totalOutings !== null && totalOutings > 0 && (
+          <span className="online-dot" aria-hidden="true" />
+          {mode === "vocab" ? "输入术语，按标准词条模板解析" : "准备出去玩"}
+          {mode !== "vocab" && totalOutings !== null && totalOutings > 0 && (
             <span
               className="outing-trip-badge"
               title={`AIbb 已经出去玩过 ${totalOutings} 次`}
@@ -307,6 +333,27 @@ function ChatHeader({
           )}
         </p>
       </div>
+      {mode === "vocab" && (
+        <button
+          aria-label="导出词表"
+          className="chat-export-button"
+          disabled={exporting}
+          type="button"
+          onClick={onExport}
+        >
+          {exporting ? "整理中…" : "导出词表"}
+        </button>
+      )}
+      {mode && (
+        <button
+          aria-label="切换模式"
+          className="chat-mode-switch"
+          type="button"
+          onClick={onSwitchMode}
+        >
+          切换
+        </button>
+      )}
       <button
         aria-label="打开设置"
         className="chat-settings-button"
@@ -494,9 +541,10 @@ function MessageBody({
   );
 }
 
-export function ChatPanel() {
+export function ChatPanel({ defaultMode = null }: ChatPanelProps) {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
+  const [mode, setMode] = useState<ChatMode | null>(defaultMode);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
   const [streamingReply, setStreamingReply] = useState("");
@@ -509,6 +557,10 @@ export function ChatPanel() {
   >({});
   const [linkMenu, setLinkMenu] = useState<{ x: number; y: number; url: string } | null>(null);
   const [linkError, setLinkError] = useState<string | null>(null);
+  const [vocabExport, setVocabExport] = useState<VocabExportResult | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const modeRef = useRef<ChatMode | null>(null);
+  modeRef.current = mode;
 
   useEffect(() => {
     if (!linkError) return;
@@ -732,21 +784,16 @@ export function ChatPanel() {
       setActiveRequestId(null);
       setStreamingReply("");
     }));
-    void loadChatHistory()
-      .then((history) => {
-        if (disposed) return;
-        const replay = replayHistory(history);
-        if (replay.length > 0) {
-          setMessages((current) => (current.length === 0 ? replay : current));
-        }
-        // Outings that were already running when this window opened: show
-        // their current stage and re-attach their live events so AIbb's
-        // ongoing activity does not disappear when the window is reopened.
-        for (const outing of history.activeOutings ?? []) {
-          attachOuting(outing.taskId, `${explorationStatusLabel(outing.status)}～`);
-        }
-      })
-      .catch(() => {});
+    // The pet click shows the window again → land on the mode chooser
+    // (普通对话 / 词汇助手) instead of the last used mode.
+    installListener(listenChatOpened(() => {
+      setMode(null);
+      setStreamingReply("");
+      setActiveRequestId(null);
+      activeRequest.current = null;
+      setVocabExport(null);
+      setError(null);
+    }));
     void loadAibbProfile()
       .then((loadedProfile) => {
         if (!disposed) {
@@ -770,6 +817,54 @@ export function ChatPanel() {
     };
   }, []);
 
+  // Entering a mode replays that channel's history; switching modes swaps the
+  // timeline so the two assistants never mix conversations.
+  useEffect(() => {
+    if (mode === "chat") {
+      void loadChatHistory()
+        .then((history) => {
+          if (modeRef.current !== "chat") return;
+          const replay = replayHistory(history);
+          if (replay.length > 0) {
+            setMessages((current) => (current.length === 0 ? replay : current));
+          }
+          // Outings already running when this window opened: show their
+          // current stage and re-attach their live events.
+          for (const outing of history.activeOutings ?? []) {
+            attachOuting(outing.taskId, `${explorationStatusLabel(outing.status)}～`);
+          }
+        })
+        .catch(() => {});
+      return;
+    }
+    if (mode === "vocab") {
+      void loadVocabHistory()
+        .then((history) => {
+          if (modeRef.current !== "vocab") return;
+          const replay: TimelineMessage[] = history.map((message) => ({
+            id: message.id,
+            role: message.role,
+            kind: "text",
+            content: message.content,
+          }));
+          if (replay.length > 0) {
+            setMessages((current) => (current.length === 0 ? replay : current));
+          }
+        })
+        .catch(() => {});
+    }
+  }, [mode]);
+
+  function enterMode(next: ChatMode | null) {
+    setError(null);
+    setMode(next);
+    setMessages([]);
+    setStreamingReply("");
+    setActiveRequestId(null);
+    activeRequest.current = null;
+    setVocabExport(null);
+  }
+
   async function sendCurrentInput() {
     const message = input.trim();
     if (!message || activeRequest.current) return;
@@ -783,6 +878,17 @@ export function ChatPanel() {
       ...current,
       { id: `user-${id}`, role: "user", kind: "text", content: message },
     ]);
+    if (modeRef.current === "vocab") {
+      // 词汇助手：直进词汇聊天，绝不经走出游意图分流。
+      try {
+        await submitVocabInput(message, id);
+      } catch (reason) {
+        activeRequest.current = null;
+        setActiveRequestId(null);
+        setError(publicError(reason));
+      }
+      return;
+    }
     try {
       const disposition = await submitUserInput(message, id);
       if (disposition.kind === "explorationStarted") {
@@ -796,6 +902,27 @@ export function ChatPanel() {
       activeRequest.current = null;
       setActiveRequestId(null);
       setError(publicError(reason));
+    }
+  }
+
+  async function exportGlossary() {
+    if (exporting) return;
+    setExporting(true);
+    setError(null);
+    try {
+      const result = await exportVocabGlossary();
+      setVocabExport(result);
+    } catch (reason) {
+      const code = (reason as { code?: string } | null)?.code ?? "request_failed";
+      const messages: Record<string, string> = {
+        emptyVocabGlossary: "还没有可导出的词汇。先在词汇助手对话里收录一些术语吧。",
+        invalidVocabExport: "词表整理结果为空，请稍后重试。",
+        vocabExportFailed: "词表导出失败，请稍后重试。",
+        request_failed: "操作失败。",
+      };
+      setError({ code, message: messages[code] ?? "词表导出失败，请稍后重试。" });
+    } finally {
+      setExporting(false);
     }
   }
 
@@ -882,9 +1009,56 @@ export function ChatPanel() {
     );
   }
 
+  if (mode === null) {
+    return (
+      <main className="panel chat-panel" aria-label="选择对话模式">
+        <ChatHeader profile={profile} totalOutings={outingStats?.totalOutings ?? null} />
+        <section className="mode-chooser" aria-label="对话模式选择">
+          <h2>想用哪种方式？</h2>
+          <p>点开对话窗后都可以在这里重新选择。</p>
+          <div className="mode-options">
+            <button
+              aria-label="进入 AIbb 对话"
+              className="mode-card"
+              type="button"
+              onClick={() => enterMode("chat")}
+            >
+              <span className="mode-card-icon" aria-hidden="true">💬</span>
+              <strong>AIbb 对话</strong>
+              <span>原来的快乐出游聊天：出去玩、聊日常、带新鲜事回来。</span>
+            </button>
+            <button
+              aria-label="进入词汇助手"
+              className="mode-card"
+              type="button"
+              onClick={() => enterMode("vocab")}
+            >
+              <span className="mode-card-icon" aria-hidden="true">📚</span>
+              <strong>词汇助手</strong>
+              <span>输入英文术语，按标准化词条模板解析收录，20 条自动提醒规划。</span>
+            </button>
+          </div>
+        </section>
+        {error && (
+          <p className="chat-feedback" role="alert">
+            <span className="chat-error-code">{error.code}</span>
+            <span>{error.message}</span>
+          </p>
+        )}
+      </main>
+    );
+  }
+
   return (
     <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
-      <ChatHeader profile={profile} totalOutings={outingStats?.totalOutings ?? null} />
+      <ChatHeader
+        profile={profile}
+        totalOutings={outingStats?.totalOutings ?? null}
+        mode={mode}
+        onSwitchMode={() => enterMode(null)}
+        onExport={() => void exportGlossary()}
+        exporting={exporting}
+      />
       <section
         className="conversation"
         aria-live="polite"
@@ -893,9 +1067,13 @@ export function ChatPanel() {
       >
         {messages.length === 0 && !activeRequestId && (
           <div className="chat-welcome">
-            <span aria-hidden="true">✦</span>
-            <h2>今天想去哪里玩？</h2>
-            <p>告诉我一个方向，或者让我自己决定。</p>
+            <span aria-hidden="true">{mode === "vocab" ? "📚" : "✦"}</span>
+            <h2>{mode === "vocab" ? "输入一个英文术语" : "今天想去哪里玩？"}</h2>
+            <p>
+              {mode === "vocab"
+                ? "我会按标准词条模板解析：音标、谐音、领域释义、词根拆分、V 编号与重复计数。"
+                : "告诉我一个方向，或者让我自己决定。"}
+            </p>
           </div>
         )}
         {messages.map((message) => (
@@ -993,13 +1171,39 @@ export function ChatPanel() {
           <span>{error.message}</span>
         </p>
       )}
-      <ArchivePanel />
+      {mode === "chat" && <ArchivePanel />}
+      {vocabExport && (
+        <section className="vocab-export-panel" aria-label="词表导出结果">
+          <div className="vocab-export-head">
+            <h3>词表已导出</h3>
+            <button
+              aria-label="关闭词表导出结果"
+              className="text-button"
+              type="button"
+              onClick={() => setVocabExport(null)}
+            >
+              关闭
+            </button>
+          </div>
+          <pre className="vocab-export-preview" data-testid="vocab-export-preview">{vocabExport.preview}</pre>
+          <p className="vocab-export-path" title={vocabExport.filePath}>
+            {vocabExport.filePath}
+          </p>
+          <button
+            className="text-button"
+            type="button"
+            onClick={() => void copyText(vocabExport.filePath)}
+          >
+            复制路径
+          </button>
+        </section>
+      )}
       <form aria-label="发送消息" className="composer" onSubmit={submit}>
         <label>
           <span className="sr-only">消息</span>
           <textarea
             aria-label="消息"
-            placeholder={`和 ${profile.name} 说点什么…`}
+            placeholder={mode === "vocab" ? "输入一个英文术语…（如 Agent）" : `和 ${profile.name} 说点什么…`}
             rows={1}
             value={input}
             onChange={(event) => setInput(event.target.value)}

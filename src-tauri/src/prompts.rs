@@ -22,6 +22,91 @@ pub const EXPLORATION_SYSTEM_INSTRUCTION: &str = "你是 AIbb，一个喜欢出�
 
 pub const SUMMARIZATION_INSTRUCTION: &str = "将以下旧对话压缩为简短事实摘要，保留用户偏好、承诺、未完成请求与 AIbb 的最后状态；不要添加原文没有的事实。";
 
+/// Built-in environment for the vocabulary assistant when the user leaves the
+/// settings field empty.
+pub const DEFAULT_VOCAB_ENV: &str = "Agent-LLM开发";
+
+/// The vocabulary assistant skill pack (领域词汇中台助理). `{大环境}` is
+/// replaced with the user-editable environment from settings; empty settings
+/// fall back to [`DEFAULT_VOCAB_ENV`]. The model maintains the virtual
+/// glossary (V 编号、重复计数、20 条阈值提醒) entirely in its conversation
+/// context — no glossary table lives on disk.
+pub const VOCAB_SYSTEM_INSTRUCTION: &str = r#"# 角色：领域词汇中台助理（默认领域：{大环境}）
+## 重要边界声明
+> ⚠️本助理不是通用英汉词典。默认工作领域为：{大环境}。
+> 若后续切换到其它业务中台，只需要修改领域配置；输出解析结构保持不变。
+> 工作模式：用户输入术语，按固定结构输出解析；内部维护虚拟词库、编号、计数；达到词汇数量阈值时，主动提醒生成表格并做初步大类规划。
+
+## 总目标
+1. 用户逐个输入英文术语，输出标准化词条块：音标（英/美）+中文谐音 +【对应领域场景释义】+词根/词源/缩写/衍生拆分 + 规则判断 + 词库更新记录。
+2. 虚拟词库维护：连续编号Vxx；重复术语不新增编号，仅累加重复提问次数。
+3. 每累计新增20条独立词条（不含重复命中），输出完当前词条后主动触发提醒：建议生成导出表格，并基于现有全部词条做初步大环境大类规划，分类允许粗糙，词汇量上涨之后再迭代细化分组。
+4. 用户指令“更新一下现有的词汇表”：不打印完整巨量表格，输出本次新增编号范围、新增术语清单，提示执行表格导出；只有用户明确要求输出表格片段，才输出表格。
+
+## 单词条强制输出模板，严格遵循，禁止自由闲聊
+# {术语}
+英 /xxx/ 美 /xxx/ 谐音：**xxx**
+
+释义：n./v./adj. 【优先结合当前工作领域做场景化释义，拒绝普通词典泛泛解释；说明该术语在系统中的角色、参与流程、关联已有词条；专有工具写明工程用途】
+拆分：词根词缀 / 缩写全称 / 项目来源 / 衍生复合词、函数名；普通基础词注明无特殊词根。
+
+> 规则执行：
+- 检索命中已有词条：写「检索词库，已有编号：Vxx {术语}，不新增独立词条；仅更新重复提问次数计数」
+- 存在相关短词条已收录：写「短词条`{短术语}(Vxx)`已存在，当前为{说明类型：衍生词/复合词/成对概念}，使用自身独立词条。」
+- 无相关旧词条：写「该术语无更长的同义复合词条，使用自身独立词条。」
+
+---
+词库更新记录：
+> 新增编号：**Vxx {术语}** / 已有编号：**Vxx {术语}**
+> 重复提问次数：N
+> 临时大类标签：【当前仅做初步归类；后续词汇量充足再精细划分】
+> 词库总条目：XXX，【新增独立词条 / 条目复用，总数不变】。
+等待下一个词汇。
+
+> 【阈值触发提醒（累计新增满20条独立词条时，在上面模板结束后追加）】
+> ⚠️中台提醒：已累计新增20条独立词汇，建议执行表格导出；请基于当前全部词条做初步大环境大类规划，允许分类粒度较粗，待词汇量进一步增长后再迭代细化分组。
+
+## 分类规划原则（20条触发表格时使用）
+1. 先提炼“大环境/顶层域”，例如：Agent理论概念、模型生成层、工具与外部集成、运行时调度、编程基础设施；不需要强制固定5组，可以根据实际词汇的分布动态调整。
+2. 初次规划允许部分词汇归入“待细化”临时组；不追求一步到位精准分组。
+3. 输出规划格式：列出顶层大类名称 + 该大类下包含的词条编号列表。
+
+## 虚拟词库初始快照（{大环境}领域基线）
+> 当前领域：{大环境}
+> 基线存量词条：V01-V85，总独立词条：111条
+> 下一条新增编号从 V86开始自增
+> 【新增计数】：0（仅统计导入本prompt之后新增的独立词条；基线存量V01-V85不计入该计数，用于20条阈值提醒）
+
+## 用户交互约定
+1. 用户输入单个术语 → 输出完整词条模板；
+2. 用户输入：`更新一下现有的词汇表` → 输出新增编号区间、新增术语列表，提示导出表格；不输出全量大表格；
+3. 用户明确说输出表格片段，才输出markdown表格；
+4. 用户输入其他指令，响应该指令，不输出词条模板；
+5. 如果用户切换领域，可以接收指令变更工作领域，解析输出结构保持不变，重置新增计数，基线快照需要人工同步更新。
+"#;
+
+/// Instruction used when the user clicks 「导出词表」: the model first tidies
+/// the glossary (dedupe, sort, structure) and then the app writes the result
+/// to a markdown file.
+pub const VOCAB_EXPORT_INSTRUCTION: &str = "你是词汇表整理助手。请把下面对话中所有已经收录的独立词条整理成一份干净的 Markdown 表格：去重（相同术语只保留一条，编号连续重排），至少包含「编号、术语、音标/谐音、释义（领域场景）、临时大类」五列；最后另起一段给出这次整理的统计（独立词条数、去重数）。只输出表格与统计，不要复述对话。若对话中没有可导出的词条，只输出「暂无词条」。";
+
+/// Builds the vocabulary assistant prompt with the user-editable environment.
+/// An empty environment falls back to the built-in Agent-LLM development
+/// domain. Vocabulary mode never carries a chat summary.
+pub fn build_vocab_prompt(context: MemoryContext, env: &str) -> ModelPrompt {
+    let env = env.trim();
+    let env = if env.is_empty() { DEFAULT_VOCAB_ENV } else { env };
+    let system_instruction = VOCAB_SYSTEM_INSTRUCTION.replace("{大环境}", env);
+    ModelPrompt {
+        system_instruction,
+        current_input: context.current_input,
+        last_assistant_paragraph: context.last_assistant_paragraph,
+        recent_messages: context.recent_messages,
+        summary: None,
+        web_material: None,
+    }
+}
+
 pub fn build_chat_prompt(context: MemoryContext) -> ModelPrompt {
     build_chat_prompt_with_persona(context, "")
 }
@@ -214,6 +299,45 @@ mod tests {
         for forbidden in ["探索主题", "选择选题", "四个结果", "下一站"] {
             assert!(!SUMMARIZATION_INSTRUCTION.contains(forbidden));
         }
+    }
+
+    #[test]
+    fn vocab_prompt_injects_the_editable_environment() {
+        let context = MemoryContext {
+            current_input: "agent".into(),
+            last_assistant_paragraph: None,
+            recent_messages: Vec::new(),
+            summary: None,
+        };
+
+        let prompt = build_vocab_prompt(context.clone(), "  汽车电子开发  ");
+
+        assert!(prompt.system_instruction.contains("默认领域：汽车电子开发"));
+        assert!(prompt.system_instruction.contains("当前领域：汽车电子开发"));
+        assert!(prompt.system_instruction.contains("基线存量词条：V01-V85"));
+        assert!(prompt.system_instruction.contains("V86开始自增"));
+        assert!(prompt.system_instruction.contains("20条独立词条"));
+        assert!(!prompt.system_instruction.contains("{大环境}"));
+        assert_eq!(prompt.current_input, "agent");
+        assert_eq!(prompt.summary, None);
+        assert_eq!(prompt.web_material, None);
+    }
+
+    #[test]
+    fn vocab_prompt_falls_back_to_the_builtin_domain_when_env_is_empty() {
+        let prompt = build_vocab_prompt(context_without_direction(), "");
+
+        assert!(prompt.system_instruction.contains("默认领域：Agent-LLM开发"));
+        assert!(prompt.system_instruction.contains("当前领域：Agent-LLM开发"));
+        assert!(!prompt.system_instruction.contains("{大环境}"));
+        assert!(!prompt.system_instruction.contains("【性格设定】"));
+    }
+
+    #[test]
+    fn export_instruction_asks_for_a_clean_deduplicated_table() {
+        assert!(VOCAB_EXPORT_INSTRUCTION.contains("Markdown 表格"));
+        assert!(VOCAB_EXPORT_INSTRUCTION.contains("去重"));
+        assert!(VOCAB_EXPORT_INSTRUCTION.contains("编号"));
     }
 
     fn context_without_direction() -> MemoryContext {

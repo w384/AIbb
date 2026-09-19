@@ -12,6 +12,7 @@ import type {
 } from "../../contracts";
 import {
   clearMemory,
+  clearVocabMemory,
   discoverArchiveStructure,
   exitApp,
   listAvailableModels,
@@ -35,6 +36,7 @@ const EMPTY_SETTINGS: ApiSettings = {
   alwaysOnTop: true,
   autostart: false,
   persona: "",
+  vocabEnv: "",
   apiConfigured: false,
 };
 
@@ -113,6 +115,7 @@ function publicError(reason: unknown): AppErrorPayload {
 export function SettingsPanel() {
   const [settings, setSettings] = useState<ApiSettings>(EMPTY_SETTINGS);
   const [persona, setPersona] = useState("");
+  const [vocabEnv, setVocabEnv] = useState("");
   const [profile, setProfile] = useState<AibbProfile>(EMPTY_PROFILE);
   const profileRef = useRef(EMPTY_PROFILE);
   const [profileName, setProfileName] = useState(EMPTY_PROFILE.name);
@@ -124,6 +127,7 @@ export function SettingsPanel() {
   const [profileError, setProfileError] = useState<AppErrorPayload | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [confirmingClear, setConfirmingClear] = useState(false);
+  const [confirmingClearVocab, setConfirmingClearVocab] = useState(false);
   const [settingsInFlight, setSettingsInFlight] = useState(false);
   const [profileInFlight, setProfileInFlight] = useState(false);
   const [archive, setArchive] = useState<ArchiveSettings | null>(null);
@@ -141,6 +145,7 @@ export function SettingsPanel() {
         if (!disposed) {
           setSettings(withProviderDefaults(loadedSettings));
           setPersona(loadedSettings.persona ?? "");
+          setVocabEnv(loadedSettings.vocabEnv ?? "");
           setApiKey("");
           setLoaded(true);
         }
@@ -219,6 +224,7 @@ export function SettingsPanel() {
       alwaysOnTop: settings.alwaysOnTop,
       autostart: settings.autostart,
       persona: persona.trim(),
+      vocabEnv: vocabEnv.trim(),
     };
   }
 
@@ -349,6 +355,17 @@ export function SettingsPanel() {
       await clearMemory();
       setConfirmingClear(false);
       setNotice("记忆已清除");
+    } catch (reason) {
+      setError(publicError(reason));
+    }
+  }
+
+  async function confirmClearVocab() {
+    setError(null);
+    try {
+      await clearVocabMemory();
+      setConfirmingClearVocab(false);
+      setNotice("词汇词库已清除");
     } catch (reason) {
       setError(publicError(reason));
     }
@@ -703,6 +720,37 @@ export function SettingsPanel() {
           </label>
         </section>
 
+        <section className="vocab-settings" aria-labelledby="vocab-heading">
+          <h2 id="vocab-heading">词汇助手</h2>
+          <p className="settings-hint">
+            左键点开对话窗后选择「词汇助手」，就能按标准化词条模板收录英文术语。
+            这里设置它默认工作的大环境（领域），留空使用内置的 Agent-LLM 开发领域。
+          </p>
+          <label className="field">
+            <span>词汇助手大环境</span>
+            <textarea
+              aria-label="词汇助手大环境"
+              disabled={settingsInFlight}
+              maxLength={500}
+              rows={3}
+              placeholder="例如：Agent-LLM 开发、汽车电子、金融风控……"
+              value={vocabEnv}
+              onChange={(event) => setVocabEnv(event.target.value)}
+            />
+            <small>最多 500 字；词汇对话与普通聊天记忆互相隔离。</small>
+          </label>
+          <div className="button-row">
+            <button
+              className="text-button danger"
+              disabled={settingsInFlight}
+              type="button"
+              onClick={() => setConfirmingClearVocab(true)}
+            >
+              清除词汇词库
+            </button>
+          </div>
+        </section>
+
         {archive && (
           <section className="archive-settings" aria-labelledby="archive-heading">
             <h2 id="archive-heading">文件归档</h2>
@@ -870,6 +918,18 @@ export function SettingsPanel() {
             <div className="button-row">
               <button className="button danger-button" type="button" onClick={() => void confirmClear()}>确认清除</button>
               <button className="button secondary" type="button" onClick={() => setConfirmingClear(false)}>取消</button>
+            </div>
+          </div>
+        </section>
+      )}
+      {confirmingClearVocab && (
+        <section className="confirm-dialog" role="dialog" aria-label="确认清除词汇词库" aria-modal="true">
+          <div className="confirm-card">
+            <h2>清除词汇词库？</h2>
+            <p>这会删除词汇助手的全部对话记录，普通聊天记忆不受影响。</p>
+            <div className="button-row">
+              <button className="button danger-button" type="button" onClick={() => void confirmClearVocab()}>确认清除</button>
+              <button className="button secondary" type="button" onClick={() => setConfirmingClearVocab(false)}>取消</button>
             </div>
           </div>
         </section>

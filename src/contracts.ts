@@ -22,6 +22,8 @@ export interface ApiSettings {
   autostart: boolean;
   /** Custom personality (「性格定制」) injected into chat prompts. */
   persona: string;
+  /** Custom environment/domain for the vocabulary assistant (词汇助手大环境). */
+  vocabEnv: string;
   apiConfigured: boolean;
 }
 
@@ -33,6 +35,7 @@ export interface SaveSettings {
   alwaysOnTop: boolean;
   autostart: boolean;
   persona: string;
+  vocabEnv: string;
 }
 
 export interface AppErrorPayload {
@@ -139,6 +142,14 @@ export interface ChatHistory {
   outings: CompletedOuting[];
   /** Outings still running, oldest first: re-attach their events on reopen. */
   activeOutings?: ActiveOuting[];
+}
+
+/** Organized vocabulary table written by 「导出词表」. */
+export interface VocabExportResult {
+  /** Absolute path of the written markdown file. */
+  filePath: string;
+  /** Leading slice of the organized table for the renderer preview. */
+  preview: string;
 }
 
 /** One outing that is still running: restored so AIbb's ongoing activity

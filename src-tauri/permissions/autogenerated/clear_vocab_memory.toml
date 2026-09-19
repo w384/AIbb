@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-clear-vocab-memory"
+description = "Enables the clear_vocab_memory command without any pre-configured scope."
+commands.allow = ["clear_vocab_memory"]
+
+[[permission]]
+identifier = "deny-clear-vocab-memory"
+description = "Denies the clear_vocab_memory command without any pre-configured scope."
+commands.deny = ["clear_vocab_memory"]

@@ -152,6 +152,11 @@ const OUTING_SECTIONS: &str = r#"
 ALTER TABLE explorations ADD COLUMN sections_json TEXT;
 "#;
 
+const VOCAB_ASSISTANT: &str = r#"
+ALTER TABLE app_settings ADD COLUMN vocab_env TEXT NOT NULL DEFAULT '';
+ALTER TABLE messages ADD COLUMN channel TEXT NOT NULL DEFAULT 'chat';
+"#;
+
 pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Error> {
     Migrations::new(vec![
         M::up(INITIAL_SCHEMA),
@@ -163,6 +168,7 @@ pub fn apply(connection: &mut Connection) -> Result<(), rusqlite_migration::Erro
         M::up(PERSONA),
         M::up(OUTING_IMAGES),
         M::up(OUTING_SECTIONS),
+        M::up(VOCAB_ASSISTANT),
     ])
     .to_latest(connection)
 }
@@ -275,5 +281,57 @@ mod tests {
                 [],
             )
             .is_err());
+    }
+
+    #[test]
+    fn adds_vocab_env_and_message_channel_with_expected_defaults() {
+        let mut connection = Connection::open_in_memory().unwrap();
+        Migrations::new(vec![M::up(INITIAL_SCHEMA)])
+            .to_latest(&mut connection)
+            .unwrap();
+
+        apply(&mut connection).unwrap();
+
+        let vocab_env: String = connection
+            .query_row(
+                "SELECT vocab_env FROM app_settings WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(vocab_env, "");
+
+        let channel: String = connection
+            .query_row(
+                "SELECT channel FROM messages WHERE id IS NOT NULL LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or_else(|_| String::new());
+        // No messages exist yet; the column exists with a chat default.
+        let columns: Vec<String> = connection
+            .prepare("PRAGMA table_info(messages)")
+            .unwrap()
+            .query_map([], |row| row.get::<_, String>(1))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap();
+        assert!(columns.iter().any(|column| column == "channel"));
+        assert_eq!(channel, "");
+
+        connection
+            .execute(
+                "INSERT INTO messages(id, role, content, created_at) VALUES ('m', 'user', 'hi', 1)",
+                [],
+            )
+            .unwrap();
+        let stored: String = connection
+            .query_row(
+                "SELECT channel FROM messages WHERE id = 'm'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(stored, "chat");
     }
 }

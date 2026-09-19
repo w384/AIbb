@@ -7,3 +7,10 @@ pub async fn clear_memory(state: tauri::State<'_, AppState>) -> Result<(), AppEr
     }
     state.memory.clear_memory().await
 }
+
+/// Clears only the vocabulary channel; the ordinary chat, summaries and
+/// outing records stay untouched.
+#[tauri::command]
+pub async fn clear_vocab_memory(state: tauri::State<'_, AppState>) -> Result<(), AppError> {
+    state.memory.clear_vocab_memory().await
+}

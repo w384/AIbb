@@ -11,8 +11,10 @@ use crate::{
     error::{sanitize_sensitive_text, AppError, ErrorCode},
     exploration::{parse_outing_command, ExplorationRequest, UserInputIntent},
     llm::{ChatMessage, ChatRequest, DeltaSink, LlmTransport, OpenAiClient},
-    memory::{ContextBuilder, MemoryRepository},
-    prompts::{build_chat_prompt_with_persona, ModelPrompt, SUMMARIZATION_INSTRUCTION},
+    memory::{ContextBuilder, MemoryRepository, CHAT_CHANNEL, VOCAB_CHANNEL},
+    prompts::{
+        build_chat_prompt_with_persona, build_vocab_prompt, SUMMARIZATION_INSTRUCTION,
+    },
     settings::{FixedCredentialStore, SettingsService},
 };
 
@@ -97,17 +99,50 @@ pub trait ChatEventSink: Send + Sync {
 }
 
 pub struct ChatTaskRuntime {
-    llm: Arc<dyn LlmTransport>,
-    exact_key: Option<String>,
-    persona: String,
+    pub(crate) llm: Arc<dyn LlmTransport>,
+    pub(crate) exact_key: Option<String>,
+    mode: TaskMode,
+}
+
+/// Which assistant persona drives a chat task: the ordinary happy AIbb chat
+/// (with optional 性格设定) or the vocabulary assistant (词汇助手).
+#[derive(Debug, Clone)]
+pub enum TaskMode {
+    Chat { persona: String },
+    Vocab { env: String },
+}
+
+impl TaskMode {
+    /// Memory channel this task reads from and writes to.
+    pub fn channel(&self) -> &'static str {
+        match self {
+            Self::Chat { .. } => CHAT_CHANNEL,
+            Self::Vocab { .. } => VOCAB_CHANNEL,
+        }
+    }
+
+    fn build_system_instruction(&self, context: &MemoryContext) -> String {
+        match self {
+            Self::Chat { persona } => {
+                build_chat_prompt_with_persona(context.clone(), persona).system_instruction
+            }
+            Self::Vocab { env } => build_vocab_prompt(context.clone(), env).system_instruction,
+        }
+    }
+
+    /// Only the ordinary chat summarises old messages; the vocabulary channel
+    /// stays thin and is injected verbatim into the prompt.
+    fn summarizes(&self) -> bool {
+        matches!(self, Self::Chat { .. })
+    }
 }
 
 impl ChatTaskRuntime {
-    pub fn new(llm: Arc<dyn LlmTransport>, exact_key: Option<String>, persona: String) -> Self {
+    pub fn new(llm: Arc<dyn LlmTransport>, exact_key: Option<String>, mode: TaskMode) -> Self {
         Self {
             llm,
             exact_key,
-            persona,
+            mode,
         }
     }
 }
@@ -129,7 +164,9 @@ impl ChatRuntimeFactory for StaticChatRuntimeFactory {
         Ok(ChatTaskRuntime::new(
             self.llm.clone(),
             self.exact_key.clone(),
-            self.persona.clone(),
+            TaskMode::Chat {
+                persona: self.persona.clone(),
+            },
         ))
     }
 }
@@ -199,14 +236,15 @@ impl ChatService {
         }
 
         let runtime = self.runtime_factory.create().await?;
+        let channel = runtime.mode.channel();
         let message = sanitize_sensitive_text(&message, runtime.exact_key.as_deref());
         let memory_generation = self.memory.generation();
         let context = ContextBuilder::new(self.memory.clone())
-            .build(message.clone())
+            .build_in(channel, message.clone())
             .await?;
         if self
             .memory
-            .append_if_generation(memory_generation, Role::User, message)
+            .append_if_generation_in(channel, memory_generation, Role::User, message)
             .await?
             .is_none()
         {
@@ -241,10 +279,9 @@ impl ChatService {
     }
 
     async fn execute_inner(&self, prepared: PreparedChat) -> Result<(), AppError> {
-        let request = chat_request(&build_chat_prompt_with_persona(
-            prepared.context,
-            &prepared.runtime.persona,
-        ));
+        let channel = prepared.runtime.mode.channel();
+        let system_instruction = prepared.runtime.mode.build_system_instruction(&prepared.context);
+        let request = chat_request_with_system(system_instruction, &prepared.context);
         let sink = SafeChatStream::new(
             prepared.request_id.clone(),
             self.events.clone(),
@@ -266,7 +303,12 @@ impl ChatService {
         let completion_boundary = self.memory.lock_completion_boundary().await;
         if self
             .memory
-            .append_if_generation(prepared.memory_generation, Role::Assistant, reply.clone())
+            .append_if_generation_in(
+                channel,
+                prepared.memory_generation,
+                Role::Assistant,
+                reply.clone(),
+            )
             .await?
             .is_none()
         {
@@ -279,7 +321,9 @@ impl ChatService {
             })
             .await?;
         drop(completion_boundary);
-        self.summarize_once(&prepared.runtime, cancellation).await;
+        if prepared.runtime.mode.summarizes() {
+            self.summarize_once(&prepared.runtime, cancellation).await;
+        }
         Ok(())
     }
 
@@ -319,8 +363,8 @@ struct PreparedChat {
     memory_generation: u64,
 }
 
-fn chat_request(prompt: &ModelPrompt) -> ChatRequest {
-    let recent = prompt
+fn chat_request_with_system(system_instruction: String, context: &MemoryContext) -> ChatRequest {
+    let recent = context
         .recent_messages
         .iter()
         .map(|message| format!("{}: {}", message.role.as_storage_value(), message.content))
@@ -328,16 +372,16 @@ fn chat_request(prompt: &ModelPrompt) -> ChatRequest {
         .join("\n");
     ChatRequest {
         messages: vec![
-            ChatMessage::new("system", prompt.system_instruction.clone()),
+            ChatMessage::new("system", system_instruction),
             ChatMessage::user(format!(
                 "当前输入：{}\n上一段：{}\n近期消息：{}\n旧摘要：{}",
-                prompt.current_input,
-                prompt
+                context.current_input,
+                context
                     .last_assistant_paragraph
                     .as_deref()
                     .unwrap_or_default(),
                 recent,
-                prompt.summary.as_deref().unwrap_or_default(),
+                context.summary.as_deref().unwrap_or_default(),
             )),
         ],
     }
@@ -605,7 +649,44 @@ impl ChatRuntimeFactory for SettingsChatRuntimeFactory {
         let (settings, api_key) = snapshot.into_parts();
         let exact_key = api_key.clone().filter(|key| !key.is_empty());
         let llm = OpenAiClient::new(settings.clone(), FixedCredentialStore::new(api_key));
-        Ok(ChatTaskRuntime::new(Arc::new(llm), exact_key, settings.persona))
+        Ok(ChatTaskRuntime::new(
+            Arc::new(llm),
+            exact_key,
+            TaskMode::Chat {
+                persona: settings.persona,
+            },
+        ))
+    }
+}
+
+/// Runtime factory for the vocabulary assistant (词汇助手): same model client
+/// as the ordinary chat, but the vocab system prompt and the `vocab` memory
+/// channel. Reads the user-editable environment (`vocab_env`) fresh on every
+/// task so settings changes apply to the next word.
+pub struct VocabChatRuntimeFactory {
+    settings: SettingsService,
+}
+
+impl VocabChatRuntimeFactory {
+    pub fn new(settings: SettingsService) -> Self {
+        Self { settings }
+    }
+}
+
+#[async_trait]
+impl ChatRuntimeFactory for VocabChatRuntimeFactory {
+    async fn create(&self) -> Result<ChatTaskRuntime, AppError> {
+        let snapshot = self.settings.exploration_task_snapshot().await?;
+        let (settings, api_key) = snapshot.into_parts();
+        let exact_key = api_key.clone().filter(|key| !key.is_empty());
+        let llm = OpenAiClient::new(settings.clone(), FixedCredentialStore::new(api_key));
+        Ok(ChatTaskRuntime::new(
+            Arc::new(llm),
+            exact_key,
+            TaskMode::Vocab {
+                env: settings.vocab_env,
+            },
+        ))
     }
 }
 
@@ -617,12 +698,18 @@ pub fn build_chat_service(
     ChatService::with_runtime_factory(
         memory,
         Arc::new(SettingsChatRuntimeFactory::new(settings)),
-        Arc::new(TauriChatEventSink { app }),
+        Arc::new(TauriChatEventSink::new(app)),
     )
 }
 
-struct TauriChatEventSink {
+pub struct TauriChatEventSink {
     app: tauri::AppHandle,
+}
+
+impl TauriChatEventSink {
+    pub fn new(app: tauri::AppHandle) -> Self {
+        Self { app }
+    }
 }
 
 #[derive(Clone, Copy, Serialize)]

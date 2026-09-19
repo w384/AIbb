@@ -16,6 +16,8 @@ use crate::{
     storage::Database,
 };
 
+use super::{CHAT_CHANNEL, VOCAB_CHANNEL};
+
 #[derive(Clone)]
 pub struct MemoryRepository {
     database: Database,
@@ -52,17 +54,29 @@ impl MemoryRepository {
         self.completion_boundary.clone().lock_owned().await
     }
 
+    /// Appends to the ordinary chat channel.
     pub async fn append(
         &self,
         role: Role,
         content: impl Into<String>,
     ) -> Result<Message, AppError> {
-        let _operation = self.operation.lock().await;
-        self.append_locked(role, content.into())
+        self.append_in(CHAT_CHANNEL, role, content).await
     }
 
-    pub(crate) async fn append_if_generation(
+    /// Appends to an explicit channel (`chat` or `vocab`).
+    pub async fn append_in(
         &self,
+        channel: &str,
+        role: Role,
+        content: impl Into<String>,
+    ) -> Result<Message, AppError> {
+        let _operation = self.operation.lock().await;
+        self.append_locked(channel, role, content.into())
+    }
+
+    pub(crate) async fn append_if_generation_in(
+        &self,
+        channel: &str,
         expected_generation: u64,
         role: Role,
         content: impl Into<String>,
@@ -71,10 +85,10 @@ impl MemoryRepository {
         if self.generation.load(Ordering::SeqCst) != expected_generation {
             return Ok(None);
         }
-        self.append_locked(role, content.into()).map(Some)
+        self.append_locked(channel, role, content.into()).map(Some)
     }
 
-    fn append_locked(&self, role: Role, content: String) -> Result<Message, AppError> {
+    fn append_locked(&self, channel: &str, role: Role, content: String) -> Result<Message, AppError> {
         let connection = self.database.connection()?;
         let now = unix_milliseconds()?;
         let latest = connection
@@ -89,8 +103,9 @@ impl MemoryRepository {
 
         connection
             .execute(
-                "INSERT INTO messages(id, role, content, created_at) VALUES (?1, ?2, ?3, ?4)",
-                params![id, role.as_storage_value(), content, created_at],
+                "INSERT INTO messages(id, role, content, created_at, channel) \
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![id, role.as_storage_value(), content, created_at, channel],
             )
             .map_err(|_| memory_error())?;
 
@@ -103,28 +118,40 @@ impl MemoryRepository {
         })
     }
 
-    pub(super) async fn context_snapshot(
+    pub(super) async fn context_snapshot_in(
         &self,
+        channel: &str,
         recent_limit: usize,
     ) -> Result<ContextSnapshot, AppError> {
         let _operation = self.operation.lock().await;
         let connection = self.database.connection()?;
 
         Ok(ContextSnapshot {
-            recent_messages: recent_messages_from_connection(&connection, recent_limit)?,
-            newest_assistant_message: newest_assistant_from_connection(&connection)?,
-            summary: newest_summary_from_connection(&connection, recent_limit)?,
+            recent_messages: recent_messages_from_connection(&connection, channel, recent_limit)?,
+            newest_assistant_message: newest_assistant_from_connection(&connection, channel)?,
+            summary: newest_summary_from_connection(&connection, channel, recent_limit)?,
         })
     }
 
+    /// Recent messages from the ordinary chat channel.
     pub async fn recent_messages(&self, limit: usize) -> Result<Vec<Message>, AppError> {
-        let _operation = self.operation.lock().await;
-        let connection = self.database.connection()?;
-        recent_messages_from_connection(&connection, limit)
+        self.recent_messages_in(CHAT_CHANNEL, limit).await
     }
 
-    pub(crate) async fn unsummarized_before_recent_window(
+    /// Recent messages from an explicit channel (`chat` or `vocab`).
+    pub async fn recent_messages_in(
         &self,
+        channel: &str,
+        limit: usize,
+    ) -> Result<Vec<Message>, AppError> {
+        let _operation = self.operation.lock().await;
+        let connection = self.database.connection()?;
+        recent_messages_from_connection(&connection, channel, limit)
+    }
+
+    pub(crate) async fn unsummarized_before_recent_window_in(
+        &self,
+        channel: &str,
         recent_limit: usize,
     ) -> Result<Vec<Message>, AppError> {
         let _operation = self.operation.lock().await;
@@ -134,15 +161,16 @@ impl MemoryRepository {
         let mut statement = connection
             .prepare(
                 "SELECT id, role, content, created_at, summarized_at FROM messages \
-                 WHERE summarized_at IS NULL AND created_at < ( \
+                 WHERE summarized_at IS NULL AND channel = ?1 AND created_at < ( \
                    SELECT created_at FROM messages \
-                   ORDER BY created_at DESC, rowid DESC LIMIT 1 OFFSET ?1 \
+                   WHERE channel = ?1 \
+                   ORDER BY created_at DESC, rowid DESC LIMIT 1 OFFSET ?2 \
                  ) \
                  ORDER BY created_at ASC, rowid ASC",
             )
             .map_err(|_| memory_error())?;
         let mut rows = statement
-            .query(params![recent_offset])
+            .query(params![channel, recent_offset])
             .map_err(|_| memory_error())?;
         let mut messages = Vec::new();
 
@@ -208,21 +236,37 @@ impl MemoryRepository {
         transaction.commit().map_err(|_| memory_error())
     }
 
+    /// Clears the ordinary chat channel, its summaries and all outing records
+    /// (the vocabulary channel is untouched — it has its own clear entry).
     pub async fn clear_memory(&self) -> Result<(), AppError> {
+        self.clear_channel(CHAT_CHANNEL, true).await
+    }
+
+    /// Clears only the vocabulary channel, leaving the chat and outings intact.
+    pub async fn clear_vocab_memory(&self) -> Result<(), AppError> {
+        self.clear_channel(VOCAB_CHANNEL, false).await
+    }
+
+    async fn clear_channel(&self, channel: &str, clear_chat_extras: bool) -> Result<(), AppError> {
         let _completion_boundary = self.completion_boundary.clone().lock_owned().await;
         let _operation = self.operation.lock().await;
         let mut connection = self.database.connection()?;
         let transaction = connection.transaction().map_err(|_| memory_error())?;
 
         transaction
-            .execute("DELETE FROM messages", [])
+            .execute(
+                "DELETE FROM messages WHERE channel = ?1",
+                params![channel],
+            )
             .map_err(|_| memory_error())?;
-        transaction
-            .execute("DELETE FROM memory_summaries", [])
-            .map_err(|_| memory_error())?;
-        transaction
-            .execute("DELETE FROM explorations", [])
-            .map_err(|_| memory_error())?;
+        if clear_chat_extras {
+            transaction
+                .execute("DELETE FROM memory_summaries", [])
+                .map_err(|_| memory_error())?;
+            transaction
+                .execute("DELETE FROM explorations", [])
+                .map_err(|_| memory_error())?;
+        }
 
         transaction.commit().map_err(|_| memory_error())?;
         self.generation.fetch_add(1, Ordering::SeqCst);
@@ -232,16 +276,18 @@ impl MemoryRepository {
 
 fn recent_messages_from_connection(
     connection: &rusqlite::Connection,
+    channel: &str,
     limit: usize,
 ) -> Result<Vec<Message>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT id, role, content, created_at, summarized_at FROM messages \
-             ORDER BY created_at DESC, rowid DESC LIMIT ?1",
+             WHERE channel = ?1 \
+             ORDER BY created_at DESC, rowid DESC LIMIT ?2",
         )
         .map_err(|_| memory_error())?;
     let mut rows = statement
-        .query(params![i64::try_from(limit).map_err(|_| memory_error())?])
+        .query(params![channel, i64::try_from(limit).map_err(|_| memory_error())?])
         .map_err(|_| memory_error())?;
     let mut messages = Vec::with_capacity(limit);
 
@@ -254,14 +300,16 @@ fn recent_messages_from_connection(
 
 fn newest_assistant_from_connection(
     connection: &rusqlite::Connection,
+    channel: &str,
 ) -> Result<Option<Message>, AppError> {
     let mut statement = connection
         .prepare(
             "SELECT id, role, content, created_at, summarized_at FROM messages \
-             WHERE role = 'assistant' ORDER BY created_at DESC, rowid DESC LIMIT 1",
+             WHERE role = 'assistant' AND channel = ?1 \
+             ORDER BY created_at DESC, rowid DESC LIMIT 1",
         )
         .map_err(|_| memory_error())?;
-    let mut rows = statement.query([]).map_err(|_| memory_error())?;
+    let mut rows = statement.query(params![channel]).map_err(|_| memory_error())?;
 
     rows.next()
         .map_err(|_| memory_error())?
@@ -271,6 +319,7 @@ fn newest_assistant_from_connection(
 
 fn newest_summary_from_connection(
     connection: &rusqlite::Connection,
+    channel: &str,
     recent_limit: usize,
 ) -> Result<Option<String>, AppError> {
     let recent_offset =
@@ -280,13 +329,14 @@ fn newest_summary_from_connection(
             "SELECT content FROM memory_summaries \
              WHERE through_message_created_at < ( \
                SELECT created_at FROM messages \
-               ORDER BY created_at DESC, rowid DESC LIMIT 1 OFFSET ?1 \
+               WHERE channel = ?1 \
+               ORDER BY created_at DESC, rowid DESC LIMIT 1 OFFSET ?2 \
              ) \
              ORDER BY created_at DESC, rowid DESC LIMIT 1",
         )
         .map_err(|_| memory_error())?;
     let mut rows = statement
-        .query(params![recent_offset])
+        .query(params![channel, recent_offset])
         .map_err(|_| memory_error())?;
 
     rows.next()
@@ -320,4 +370,45 @@ fn memory_error() -> AppError {
         "storageUnavailable",
         "Conversation memory could not be accessed.",
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn chat_and_vocab_channels_are_isolated() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = MemoryRepository::open(directory.path().join("aibb.sqlite3")).unwrap();
+
+        repository.append(Role::User, "普通聊天").await.unwrap();
+        repository
+            .append_in(VOCAB_CHANNEL, Role::User, "agent 术语")
+            .await
+            .unwrap();
+        repository
+            .append_in(VOCAB_CHANNEL, Role::Assistant, "# agent 词条")
+            .await
+            .unwrap();
+
+        let chat = repository.recent_messages(10).await.unwrap();
+        let vocab = repository.recent_messages_in(VOCAB_CHANNEL, 10).await.unwrap();
+        assert_eq!(chat.len(), 1);
+        assert_eq!(chat[0].content, "普通聊天");
+        assert_eq!(vocab.len(), 2);
+        assert_eq!(vocab[0].content, "agent 术语");
+        assert_eq!(vocab[1].content, "# agent 词条");
+
+        // 分开清除：只清词汇通道，普通聊天保留。
+        repository.clear_vocab_memory().await.unwrap();
+        assert!(repository
+            .recent_messages_in(VOCAB_CHANNEL, 10)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(repository.recent_messages(10).await.unwrap().len(), 1);
+
+        repository.clear_memory().await.unwrap();
+        assert!(repository.recent_messages(10).await.unwrap().is_empty());
+    }
 }

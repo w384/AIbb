@@ -796,6 +796,7 @@ async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation()
             always_on_top: false,
             autostart: false,
             persona: String::new(),
+            vocab_env: String::new(),
         })
         .await
         .unwrap();
@@ -832,6 +833,7 @@ async fn production_task_snapshot_keeps_one_base_model_and_key_across_rotation()
                     always_on_top: false,
                     autostart: false,
                     persona: String::new(),
+                    vocab_env: String::new(),
                 })
                 .await
         }

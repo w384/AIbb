@@ -12,21 +12,24 @@ pub mod settings;
 pub mod storage;
 pub mod web;
 
+use std::sync::Arc;
+
 use app_state::AppState;
 use archive::service::ArchiveService;
 use commands::archive::{
     archive_files, archive_ledger, discover_archive_structure, load_archive_settings,
     open_archive_window, save_archive_settings, take_pending_archive_paths,
 };
-use commands::chat::{build_chat_service, load_chat_history, submit_user_input};
+use commands::chat::{build_chat_service, load_chat_history, submit_user_input, ChatService, VocabChatRuntimeFactory};
 use commands::exploration::outing_stats;
 use commands::exploration::build_exploration_orchestrator;
 use commands::link::open_external_url;
-use commands::memory::clear_memory;
+use commands::memory::{clear_memory, clear_vocab_memory};
 use commands::profile::{load_aibb_profile, reset_aibb_avatar, save_aibb_avatar, save_aibb_name};
 use commands::settings::{
     clear_api_key, list_available_models, load_settings, save_settings, test_connection,
 };
+use commands::vocab::{export_vocab_glossary, load_vocab_history, submit_vocab_input};
 use commands::window::{
     exit_app, open_settings_window, pet_drag_begin, pet_drag_end, pet_drag_move,
     save_pet_position, toggle_chat_window,
@@ -92,6 +95,11 @@ pub fn run() {
                 settings.clone(),
             );
             let chat = build_chat_service(app.handle().clone(), memory.clone(), settings.clone());
+            let vocab = ChatService::with_runtime_factory(
+                memory.clone(),
+                Arc::new(VocabChatRuntimeFactory::new(settings.clone())),
+                Arc::new(commands::chat::TauriChatEventSink::new(app.handle().clone())),
+            );
             let archive = ArchiveService::new(database.clone(), app.path().app_data_dir()?);
             tauri::async_runtime::block_on(exploration.recover_interrupted())?;
             app.manage(AppState::with_services(
@@ -100,6 +108,7 @@ pub fn run() {
                 memory,
                 archive,
                 chat,
+                vocab,
                 exploration,
             ));
             platform::window_controller::restore_pet_window_position(app.handle(), &settings)?;
@@ -141,7 +150,11 @@ pub fn run() {
             load_chat_history,
             outing_stats,
             clear_memory,
+            clear_vocab_memory,
             submit_user_input,
+            submit_vocab_input,
+            load_vocab_history,
+            export_vocab_glossary,
             archive_files,
             load_archive_settings,
             save_archive_settings,
@@ -268,7 +281,10 @@ mod tests {
                 "allow-submit-user-input",
                 "allow-archive-files",
                 "allow-take-pending-archive-paths",
-                "allow-archive-ledger"
+                "allow-archive-ledger",
+                "allow-submit-vocab-input",
+                "allow-load-vocab-history",
+                "allow-export-vocab-glossary"
             ])
         );
     }
@@ -293,6 +309,7 @@ mod tests {
                 "allow-test-connection",
                 "allow-list-available-models",
                 "allow-clear-memory",
+                "allow-clear-vocab-memory",
                 "allow-exit-app",
                 "allow-load-aibb-profile",
                 "allow-save-aibb-name",

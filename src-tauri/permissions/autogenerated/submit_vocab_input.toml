@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-submit-vocab-input"
+description = "Enables the submit_vocab_input command without any pre-configured scope."
+commands.allow = ["submit_vocab_input"]
+
+[[permission]]
+identifier = "deny-submit-vocab-input"
+description = "Denies the submit_vocab_input command without any pre-configured scope."
+commands.deny = ["submit_vocab_input"]

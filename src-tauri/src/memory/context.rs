@@ -3,7 +3,7 @@ use crate::{
     error::AppError,
 };
 
-use super::MemoryRepository;
+use super::{MemoryRepository, CHAT_CHANNEL};
 
 pub struct ContextBuilder {
     repository: MemoryRepository,
@@ -15,9 +15,19 @@ impl ContextBuilder {
     }
 
     pub async fn build(&self, current_input: impl Into<String>) -> Result<MemoryContext, AppError> {
+        self.build_in(CHAT_CHANNEL, current_input).await
+    }
+
+    /// Builds a conversation context scoped to one memory channel (`chat` or
+    /// `vocab`); the vocabulary channel never carries a summary.
+    pub async fn build_in(
+        &self,
+        channel: &str,
+        current_input: impl Into<String>,
+    ) -> Result<MemoryContext, AppError> {
         // Keep the injected conversation thin (a few recent turns) so the
         // model leans on its own thinking rather than a wall of history.
-        let snapshot = self.repository.context_snapshot(8).await?;
+        let snapshot = self.repository.context_snapshot_in(channel, 8).await?;
         let last_assistant_paragraph = snapshot
             .newest_assistant_message
             .and_then(|message| last_non_empty_paragraph(&message.content));
@@ -31,9 +41,16 @@ impl ContextBuilder {
     }
 
     pub async fn summary_candidate(&self) -> Result<Option<SummaryCandidate>, AppError> {
+        self.summary_candidate_in(CHAT_CHANNEL).await
+    }
+
+    pub async fn summary_candidate_in(
+        &self,
+        channel: &str,
+    ) -> Result<Option<SummaryCandidate>, AppError> {
         let messages = self
             .repository
-            .unsummarized_before_recent_window(40)
+            .unsummarized_before_recent_window_in(channel, 40)
             .await?;
         let total_characters = messages
             .iter()

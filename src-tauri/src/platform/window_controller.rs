@@ -1,10 +1,14 @@
 use tauri::{
-    AppHandle, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
+    AppHandle, Emitter, Manager, PhysicalPosition, WebviewUrl, WebviewWindow, WebviewWindowBuilder,
 };
 
 use crate::{
     app_state::AppState, error::AppError, platform::avatar_icons, settings::SettingsService,
 };
+
+/// Fired on the chat window every time the pet click shows it, so the window
+/// lands on the mode chooser (普通对话 / 词汇助手) rather than the last mode.
+pub const CHAT_OPENED_EVENT: &str = "chat://opened";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Position {
@@ -49,6 +53,9 @@ pub fn toggle_chat(app: &AppHandle, profile_name: &str) -> Result<(), AppError> 
         window
             .show()
             .map_err(|error| window_error("show chat window", error))?;
+        // The chooser screen resets on every pet click so the user always has
+        // the two options in front of them (普通对话 / 词汇助手).
+        let _ = app.emit_to("chat", CHAT_OPENED_EVENT, ());
         window
             .set_focus()
             .map_err(|error| window_error("focus chat window", error))

@@ -26,6 +26,7 @@ pub struct PersistedSettings {
     pub always_on_top: bool,
     pub autostart: bool,
     pub persona: String,
+    pub vocab_env: String,
     pub first_run_complete: bool,
     pub pet_position: Option<(i32, i32)>,
 }
@@ -60,7 +61,7 @@ impl Database {
         self.connection()?
             .query_row(
                 "SELECT api_base, model, web_mode, always_on_top, autostart, persona, \
-                 first_run_complete, pet_x, pet_y \
+                 first_run_complete, pet_x, pet_y, vocab_env \
                  FROM app_settings WHERE singleton = 1",
                 [],
                 |row| {
@@ -76,6 +77,7 @@ impl Database {
                         persona: row.get(5)?,
                         first_run_complete: row.get::<_, i64>(6)? != 0,
                         pet_position: pet_x.zip(pet_y),
+                        vocab_env: row.get(9)?,
                     })
                 },
             )
@@ -90,12 +92,14 @@ impl Database {
         always_on_top: bool,
         autostart: bool,
         persona: &str,
+        vocab_env: &str,
     ) -> Result<(), AppError> {
         self.connection()?
             .execute(
                 "UPDATE app_settings SET api_base = ?1, model = ?2, web_mode = ?3, \
-                 always_on_top = ?4, autostart = ?5, persona = ?6 WHERE singleton = 1",
-                params![api_base, model, web_mode, always_on_top, autostart, persona],
+                 always_on_top = ?4, autostart = ?5, persona = ?6, vocab_env = ?7 \
+                 WHERE singleton = 1",
+                params![api_base, model, web_mode, always_on_top, autostart, persona, vocab_env],
             )
             .map(|_| ())
             .map_err(|_| storage_error())

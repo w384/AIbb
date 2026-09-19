@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-export-vocab-glossary"
+description = "Enables the export_vocab_glossary command without any pre-configured scope."
+commands.allow = ["export_vocab_glossary"]
+
+[[permission]]
+identifier = "deny-export-vocab-glossary"
+description = "Denies the export_vocab_glossary command without any pre-configured scope."
+commands.deny = ["export_vocab_glossary"]

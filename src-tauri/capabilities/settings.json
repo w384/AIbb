@@ -11,6 +11,7 @@
     "allow-test-connection",
     "allow-list-available-models",
     "allow-clear-memory",
+    "allow-clear-vocab-memory",
     "allow-exit-app",
     "allow-load-aibb-profile",
     "allow-save-aibb-name",

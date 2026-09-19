@@ -6,4 +6,5 @@ pub mod link;
 pub mod memory;
 pub mod profile;
 pub mod settings;
+pub mod vocab;
 pub mod window;

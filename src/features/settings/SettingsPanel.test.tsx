@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { SettingsPanel } from "./SettingsPanel";
 import {
   clearMemory,
+  clearVocabMemory,
   exitApp,
   listAvailableModels,
   loadAibbProfile,
@@ -21,6 +22,7 @@ const unlistenProfile = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
   clearMemory: vi.fn(),
+  clearVocabMemory: vi.fn(),
   exitApp: vi.fn(),
   loadAibbProfile: vi.fn(),
   listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
@@ -61,6 +63,7 @@ describe("SettingsPanel", () => {
     vi.mocked(saveSettings).mockResolvedValue();
     vi.mocked(testConnection).mockResolvedValue();
     vi.mocked(clearMemory).mockResolvedValue();
+    vi.mocked(clearVocabMemory).mockResolvedValue();
     vi.mocked(exitApp).mockResolvedValue();
     vi.mocked(normalizeAvatarFile).mockResolvedValue({
       bytes: new Uint8Array([1, 2, 3]),
@@ -93,6 +96,7 @@ describe("SettingsPanel", () => {
       alwaysOnTop: true,
       autostart: false,
       persona: "",
+      vocabEnv: "",
       apiConfigured: true,
     });
   });
@@ -278,6 +282,7 @@ describe("SettingsPanel", () => {
       alwaysOnTop: true,
       autostart: false,
       persona: "",
+      vocabEnv: "",
       apiConfigured: true,
     });
     render(<SettingsPanel />);
@@ -438,6 +443,7 @@ describe("SettingsPanel", () => {
       alwaysOnTop: true,
       autostart: false,
       persona: "",
+      vocabEnv: "",
       apiConfigured: false,
     });
     render(<SettingsPanel />);
@@ -477,6 +483,35 @@ describe("SettingsPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "确认清除" }));
     await waitFor(() => expect(clearMemory).toHaveBeenCalledTimes(1));
+  });
+
+  it("saves the vocabulary environment with the settings", async () => {
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.change(screen.getByLabelText("词汇助手大环境"), {
+      target: { value: " 汽车电子开发 " },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
+
+    await waitFor(() =>
+      expect(saveSettings).toHaveBeenCalledWith(
+        expect.objectContaining({ vocabEnv: "汽车电子开发" }),
+      ),
+    );
+  });
+
+  it("clears only the vocabulary channel after an in-window confirmation", async () => {
+    render(<SettingsPanel />);
+    await screen.findByLabelText("API 地址");
+
+    fireEvent.click(screen.getByRole("button", { name: "清除词汇词库" }));
+    expect(clearVocabMemory).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "确认清除词汇词库" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认清除" }));
+    await waitFor(() => expect(clearVocabMemory).toHaveBeenCalledTimes(1));
+    expect(clearMemory).not.toHaveBeenCalled();
   });
 
   it("offers an explicit exit action from settings", async () => {

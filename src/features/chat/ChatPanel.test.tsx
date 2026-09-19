@@ -14,13 +14,16 @@ import type {
 } from "../../contracts";
 import { ChatPanel } from "./ChatPanel";
 import {
+  exportVocabGlossary,
   getBootstrapState,
   loadAibbProfile,
   loadChatHistory,
   loadOutingStats,
+  loadVocabHistory,
   listenChatComplete,
   listenChatDelta,
   listenChatError,
+  listenChatOpened,
   listenChatWindowFocus,
   listenExplorationComplete,
   listenExplorationDiaryDelta,
@@ -32,6 +35,7 @@ import {
   openExternal,
   openSettingsWindow,
   submitUserInput,
+  submitVocabInput,
 } from "../../lib/tauri";
 
 type Listener<T> = (payload: T) => void;
@@ -46,6 +50,7 @@ let explorationQueryListener: Listener<ExplorationQueryEvent>;
 let explorationPageReadListener: Listener<ExplorationPageReadEvent>;
 let profileListener: Listener<{ name: string; avatarDataUrl: string | null; version: number }>;
 let chatWindowFocusListener: (focused: boolean) => void;
+let chatOpenedListener: () => void;
 const unlistenDelta = vi.fn();
 const unlistenComplete = vi.fn();
 const unlistenError = vi.fn();
@@ -57,18 +62,26 @@ const unlistenExplorationQuery = vi.fn();
 const unlistenExplorationPageRead = vi.fn();
 const unlistenProfile = vi.fn();
 const unlistenChatWindowFocus = vi.fn();
+const unlistenChatOpened = vi.fn();
 
 vi.mock("../../lib/tauri", () => ({
   getBootstrapState: vi.fn(),
   loadAibbProfile: vi.fn(),
   loadChatHistory: vi.fn(),
   loadOutingStats: vi.fn(),
+  loadVocabHistory: vi.fn(),
+  submitVocabInput: vi.fn(),
+  exportVocabGlossary: vi.fn(),
   openExternal: vi.fn(async () => {}),
   openSettingsWindow: vi.fn(),
   submitUserInput: vi.fn(),
   takePendingArchivePaths: vi.fn(async () => []),
   archiveLedger: vi.fn(async () => []),
   listenArchivePending: vi.fn(async () => () => {}),
+  listenChatOpened: vi.fn(async (listener: () => void) => {
+    chatOpenedListener = listener;
+    return unlistenChatOpened;
+  }),
   listenChatDelta: vi.fn(async (listener: Listener<ChatDeltaEvent>) => {
     deltaListener = listener;
     return unlistenDelta;
@@ -154,6 +167,12 @@ describe("ChatPanel", () => {
       messages: [],
       outings: [],
     });
+    vi.mocked(loadVocabHistory).mockResolvedValue([]);
+    vi.mocked(submitVocabInput).mockResolvedValue();
+    vi.mocked(exportVocabGlossary).mockResolvedValue({
+      filePath: "C:\\data\\vocab-export\\词汇表-1.md",
+      preview: "| 编号 | 术语 | 释义 |\n| --- | --- | --- |\n| V86 | Agent | 智能体 |",
+    });
     vi.mocked(loadOutingStats).mockResolvedValue({
       totalOutings: 0,
       totalDirections: 0,
@@ -174,7 +193,7 @@ describe("ChatPanel", () => {
       petStatus: "idle",
     });
 
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
 
     expect(await screen.findByText(/喜欢出去玩耍的快乐 AIbb/)).toBeVisible();
     expect(screen.getByText(/platform.deepseek.com/)).toBeVisible();
@@ -188,7 +207,7 @@ describe("ChatPanel", () => {
   });
 
   it("presents a branded chat header with a direct settings action", async () => {
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
 
     expect(await screen.findByRole("heading", { name: "AIbb" })).toBeVisible();
     expect(screen.getByText("准备出去玩")).toBeVisible();
@@ -203,7 +222,7 @@ describe("ChatPanel", () => {
       kind: "chatStarted",
       requestId: id,
     }));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
 
     fireEvent.change(editor, { target: { value: "第一行" } });
@@ -222,7 +241,7 @@ describe("ChatPanel", () => {
       kind: "chatStarted",
       requestId: id,
     }));
-    const view = render(<ChatPanel />);
+    const view = render(<ChatPanel defaultMode="chat" />);
     await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenChatDelta).toHaveBeenCalledTimes(1));
 
@@ -266,7 +285,7 @@ describe("ChatPanel", () => {
       version: 2,
     });
     mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-1" });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     await screen.findByRole("heading", { name: "小团子" });
     await waitFor(() => {
@@ -339,7 +358,7 @@ describe("ChatPanel", () => {
       ],
       outings: [],
     });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
 
     const urlLink = await screen.findByRole("link", { name: "https://example.com/abc" });
     expect(urlLink).toHaveAttribute("href", "https://example.com/abc");
@@ -379,7 +398,7 @@ describe("ChatPanel", () => {
         },
       ],
     });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
 
     expect(await screen.findByText("昨天问你去哪里玩")).toBeVisible();
     expect(screen.getByRole("heading", { name: "第 3 轮回来啦" })).toBeVisible();
@@ -398,7 +417,7 @@ describe("ChatPanel", () => {
   });
 
   it("registers a focus listener so reactivating the window lands at the latest message", async () => {
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     await screen.findByRole("textbox", { name: "消息" });
 
     expect(listenChatWindowFocus).toHaveBeenCalledTimes(1);
@@ -422,7 +441,7 @@ describe("ChatPanel", () => {
         { direction: "吃遍小吃街", count: 1 },
       ],
     });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     await screen.findByRole("textbox", { name: "消息" });
 
     expect(screen.getByText("🐾 ×4")).toBeVisible();
@@ -434,7 +453,7 @@ describe("ChatPanel", () => {
       kind: "explorationStarted",
       taskId: "task-1",
     }));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "去看海" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -453,7 +472,7 @@ describe("ChatPanel", () => {
       kind: "explorationStarted",
       taskId: "task-1",
     }));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "去看海" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -473,7 +492,7 @@ describe("ChatPanel", () => {
       requestId: "req-1",
       spontaneousTaskId: "task-spontaneous",
     }));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "最近有什么好玩的？" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -492,7 +511,7 @@ describe("ChatPanel", () => {
       code: "exploration_already_running",
       message: "internal task details must stay hidden",
     });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
 
     fireEvent.change(editor, { target: { value: "去海里玩" } });
@@ -508,7 +527,7 @@ describe("ChatPanel", () => {
   it("keeps progress that arrives before the exploration-start response", async () => {
     const pending = deferredDisposition();
     mockSubmit.mockReturnValue(pending.promise);
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenExplorationProgress).toHaveBeenCalledTimes(1));
 
@@ -527,7 +546,7 @@ describe("ChatPanel", () => {
 
   it("shows the chosen query and read pages while exploring, then clears them", async () => {
     mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-proc" });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenExplorationQuery).toHaveBeenCalledTimes(1));
     await waitFor(() => expect(listenExplorationPageRead).toHaveBeenCalledTimes(1));
@@ -559,7 +578,7 @@ describe("ChatPanel", () => {
 
   it("renders the four diary sections with distinct titles", async () => {
     mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-sections" });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "去山里玩" } });
     fireEvent.keyDown(editor, { key: "Enter" });
@@ -588,7 +607,7 @@ describe("ChatPanel", () => {
       configurable: true,
     });
     mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-links" });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "去海里玩" } });
     fireEvent.keyDown(editor, { key: "Enter" });
@@ -609,7 +628,7 @@ describe("ChatPanel", () => {
 
   it("streams the diary live and replaces it with the final card", async () => {
     mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-live" });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenExplorationDiaryDelta).toHaveBeenCalledTimes(1));
     fireEvent.change(editor, { target: { value: "去海里玩" } });
@@ -629,7 +648,7 @@ describe("ChatPanel", () => {
   it("keeps a completion that arrives before the exploration-start response", async () => {
     const pending = deferredDisposition();
     mockSubmit.mockReturnValue(pending.promise);
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenExplorationComplete).toHaveBeenCalledTimes(1));
 
@@ -649,7 +668,7 @@ describe("ChatPanel", () => {
   it("keeps an error that arrives before the exploration-start response", async () => {
     const pending = deferredDisposition();
     mockSubmit.mockReturnValue(pending.promise);
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenExplorationError).toHaveBeenCalledTimes(1));
 
@@ -672,7 +691,7 @@ describe("ChatPanel", () => {
 
   it("keeps the first terminal outing event when a conflicting event arrives late", async () => {
     mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-terminal" });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "去海里玩" } });
     fireEvent.keyDown(editor, { key: "Enter" });
@@ -693,7 +712,7 @@ describe("ChatPanel", () => {
 
   it("replaces an outing placeholder with a safe Chinese error", async () => {
     mockSubmit.mockResolvedValue({ kind: "explorationStarted", taskId: "task-1" });
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "去海里玩" } });
     fireEvent.keyDown(editor, { key: "Enter" });
@@ -719,7 +738,7 @@ describe("ChatPanel", () => {
       kind: "chatStarted",
       requestId: id,
     }));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
 
     fireEvent.change(editor, { target: { value: "今天星期几？" } });
@@ -738,7 +757,7 @@ describe("ChatPanel", () => {
       kind: "chatStarted",
       requestId: id,
     }));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     const editor = await screen.findByRole("textbox", { name: "消息" });
     fireEvent.change(editor, { target: { value: "你好" } });
     fireEvent.click(screen.getByRole("button", { name: "发送" }));
@@ -775,7 +794,7 @@ describe("ChatPanel", () => {
 
   it("cleans up a resolved profile listener when another listener rejects", async () => {
     vi.mocked(listenChatDelta).mockRejectedValueOnce(new Error("registration failed"));
-    const view = render(<ChatPanel />);
+    const view = render(<ChatPanel defaultMode="chat" />);
 
     await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenProfileUpdated).toHaveBeenCalledTimes(1));
@@ -786,7 +805,7 @@ describe("ChatPanel", () => {
 
   it("keeps the default identity when profile loading fails", async () => {
     vi.mocked(loadAibbProfile).mockRejectedValueOnce(new Error("profile unavailable"));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
 
     await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(loadAibbProfile).toHaveBeenCalledTimes(1));
@@ -798,7 +817,7 @@ describe("ChatPanel", () => {
       kind: "chatStarted",
       requestId: id,
     }));
-    render(<ChatPanel />);
+    render(<ChatPanel defaultMode="chat" />);
     await screen.findByRole("textbox", { name: "消息" });
 
     fireEvent.change(screen.getByRole("textbox", { name: "消息" }), {
@@ -825,5 +844,63 @@ describe("ChatPanel", () => {
     expect(screen.getByRole("button", { name: "发送" })).toBeEnabled();
     expect(listenChatComplete).toHaveBeenCalledTimes(1);
     expect(listenChatError).toHaveBeenCalledTimes(1);
+  });
+
+  it("starts on the mode chooser with the two assistant options", async () => {
+    render(<ChatPanel />);
+
+    expect(await screen.findByRole("heading", { name: "想用哪种方式？" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "进入 AIbb 对话" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "进入词汇助手" })).toBeVisible();
+    expect(screen.queryByRole("textbox", { name: "消息" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "进入 AIbb 对话" }));
+    expect(await screen.findByRole("textbox", { name: "消息" })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "AIbb" })).toBeVisible();
+  });
+
+  it("returns to the chooser when the pet click re-opens the window", async () => {
+    render(<ChatPanel defaultMode="chat" />);
+    await screen.findByRole("textbox", { name: "消息" });
+    await waitFor(() => expect(listenChatOpened).toHaveBeenCalledTimes(1));
+
+    act(() => chatOpenedListener());
+
+    expect(screen.getByRole("button", { name: "进入 AIbb 对话" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "进入词汇助手" })).toBeVisible();
+  });
+
+  it("routes vocabulary terms through the vocab channel and replays its history", async () => {
+    vi.mocked(loadVocabHistory).mockResolvedValue([
+      { id: "vocab-1", role: "user", content: "agent", createdAt: 1 },
+      { id: "vocab-2", role: "assistant", content: "# agent\n英 /ˈeɪdʒənt/", createdAt: 2 },
+    ]);
+    render(<ChatPanel />);
+    await screen.findByRole("button", { name: "进入词汇助手" });
+
+    fireEvent.click(screen.getByRole("button", { name: "进入词汇助手" }));
+    const editor = await screen.findByRole("textbox", { name: "消息" });
+    expect(screen.getByRole("heading", { name: /词汇助手/ })).toBeVisible();
+    expect(await screen.findByText(/^# agent/)).toBeVisible();
+    expect(screen.getByPlaceholderText(/输入一个英文术语/)).toBeVisible();
+
+    fireEvent.change(editor, { target: { value: "tool" } });
+    fireEvent.click(screen.getByRole("button", { name: "发送" }));
+
+    await waitFor(() =>
+      expect(submitVocabInput).toHaveBeenCalledWith("tool", expect.any(String)),
+    );
+    expect(mockSubmit).not.toHaveBeenCalled();
+  });
+
+  it("exports the glossary through the tidy-then-write flow and shows the preview", async () => {
+    render(<ChatPanel defaultMode="vocab" />);
+    await screen.findByRole("textbox", { name: "消息" });
+
+    fireEvent.click(screen.getByRole("button", { name: "导出词表" }));
+
+    await waitFor(() => expect(exportVocabGlossary).toHaveBeenCalledTimes(1));
+    expect(await screen.findByTestId("vocab-export-preview")).toHaveTextContent("V86");
+    expect(screen.getByText(/词汇表-1\.md/)).toBeVisible();
   });
 });
