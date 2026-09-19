@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getVersion } from "@tauri-apps/api/app";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   ApiSettings,
@@ -65,6 +66,10 @@ export function petDragEnd(): Promise<void> {
 
 export function getBootstrapState(): Promise<BootstrapState> {
   return invoke("get_bootstrap_state");
+}
+
+export function getAppVersion(): Promise<string> {
+  return getVersion();
 }
 
 export function submitUserInput(

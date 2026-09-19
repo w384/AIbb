@@ -24,6 +24,7 @@ vi.mock("../../lib/tauri", () => ({
   clearMemory: vi.fn(),
   clearVocabMemory: vi.fn(),
   exitApp: vi.fn(),
+  getAppVersion: vi.fn(async () => "0.3.0"),
   loadAibbProfile: vi.fn(),
   listenProfileUpdated: vi.fn(async (listener: typeof profileListener) => {
     profileListener = listener;
@@ -550,5 +551,12 @@ describe("SettingsPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: "退出 AIbb" }));
 
     expect(exitApp).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the app version from the backend in the footer", async () => {
+    render(<SettingsPanel />);
+    await screen.findByRole("heading", { name: "AIbb 设置" });
+
+    expect(await screen.findByText(/AIbb v0\.3\.0/)).toBeVisible();
   });
 });

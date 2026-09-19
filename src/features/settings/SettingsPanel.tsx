@@ -15,6 +15,7 @@ import {
   clearVocabMemory,
   discoverArchiveStructure,
   exitApp,
+  getAppVersion,
   listAvailableModels,
   loadAibbProfile,
   loadArchiveSettings,
@@ -149,7 +150,20 @@ export function SettingsPanel() {
   const [archiveInFlight, setArchiveInFlight] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[] | null>(null);
   const [checkingModels, setCheckingModels] = useState(false);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SettingSectionId>("basic");
+
+  useEffect(() => {
+    let active = true;
+    void getAppVersion()
+      .then((version) => {
+        if (active) setAppVersion(version);
+      })
+      .catch(() => undefined);
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -1026,7 +1040,7 @@ export function SettingsPanel() {
           <button className="text-button danger" type="button" onClick={() => void exitApp()}>退出 AIbb</button>
         </div>
         <footer className="settings-footer">
-          AIbb v0.1.0 · 本地优先 · 对话、记忆与归档记录只保存在这台电脑上
+          AIbb v{appVersion ?? "…"} · 本地优先 · 对话、记忆与归档记录只保存在这台电脑上
           <span className="settings-copyright">© 2026 Clink AI · 保留所有权利 · 仅限个人测试使用</span>
         </footer>
       </form>
