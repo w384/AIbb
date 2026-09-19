@@ -458,13 +458,13 @@ describe("SettingsPanel", () => {
     expect(screen.getByLabelText("API Key")).toHaveAttribute("placeholder", "已安全保存");
   });
 
-  it("saves a chosen personality preset with the settings", async () => {
+  it("saves a chosen personality preset with the basic profile", async () => {
     render(<SettingsPanel />);
     fireEvent.click(await screen.findByRole("button", { name: "活泼元气" }));
 
     const personaField = screen.getByLabelText("自定义性格设定") as HTMLTextAreaElement;
     expect(personaField.value).toContain("元气满满");
-    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存 AIbb 资料" }));
 
     await waitFor(() =>
       expect(saveSettings).toHaveBeenCalledWith(
@@ -485,14 +485,14 @@ describe("SettingsPanel", () => {
     await waitFor(() => expect(clearMemory).toHaveBeenCalledTimes(1));
   });
 
-  it("saves the vocabulary environment with the settings", async () => {
+  it("saves the vocabulary environment from its own section", async () => {
     render(<SettingsPanel />);
     await screen.findByLabelText("API 地址");
 
     fireEvent.change(screen.getByLabelText("词汇助手大环境"), {
       target: { value: " 汽车电子开发 " },
     });
-    fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
+    fireEvent.click(screen.getByRole("button", { name: "保存词汇助手设置" }));
 
     await waitFor(() =>
       expect(saveSettings).toHaveBeenCalledWith(

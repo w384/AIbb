@@ -54,13 +54,13 @@ const DEFAULT_PROFILE: AibbProfile = {
   version: 0,
 };
 
-/** Which assistant the chat window is in. `null` shows the mode chooser. */
+/** Which assistant the chat window is in. Defaults to the ordinary AIbb chat. */
 type ChatMode = "chat" | "vocab";
 
 interface ChatPanelProps {
-  /** Initial mode; the real app starts on the chooser (`null`). Tests can
-   * jump straight into a mode. */
-  defaultMode?: ChatMode | null;
+  /** Initial mode; the real app opens in the ordinary AIbb chat (`chat`).
+   * Tests can jump straight into either mode. */
+  defaultMode?: ChatMode;
 }
 
 interface ChatMessageView {
@@ -305,21 +305,19 @@ function ChatHeader({
 }: {
   profile: AibbProfile;
   totalOutings: number | null;
-  mode?: ChatMode | null;
+  mode: ChatMode;
   onSwitchMode?: () => void;
   onExport?: () => void;
   exporting?: boolean;
 }) {
+  const switchingTo = mode === "vocab" ? "chat" : "vocab";
   return (
     <header className="chat-header">
       <span className="chat-avatar">
         <AibbAvatar avatarDataUrl={profile.avatarDataUrl} name={profile.name} />
       </span>
       <div className="chat-identity">
-        <h1>
-          {mode === "vocab" ? "词汇助手" : profile.name}
-          {mode === "vocab" && <span className="chat-mode-badge">📚</span>}
-        </h1>
+        <h1>{profile.name}</h1>
         <p>
           <span className="online-dot" aria-hidden="true" />
           {mode === "vocab" ? "输入术语，按标准词条模板解析" : "准备出去玩"}
@@ -344,16 +342,14 @@ function ChatHeader({
           {exporting ? "整理中…" : "导出词表"}
         </button>
       )}
-      {mode && (
-        <button
-          aria-label="切换模式"
-          className="chat-mode-switch"
-          type="button"
-          onClick={onSwitchMode}
-        >
-          切换
-        </button>
-      )}
+      <button
+        aria-label={`切换到${switchingTo === "vocab" ? "词汇助手" : "AIbb 对话"}`}
+        className="chat-mode-switch"
+        type="button"
+        onClick={onSwitchMode}
+      >
+        {switchingTo === "vocab" ? "词汇" : "对话"}
+      </button>
       <button
         aria-label="打开设置"
         className="chat-settings-button"
@@ -541,10 +537,10 @@ function MessageBody({
   );
 }
 
-export function ChatPanel({ defaultMode = null }: ChatPanelProps) {
+export function ChatPanel({ defaultMode = "chat" }: ChatPanelProps) {
   const [bootstrap, setBootstrap] = useState<BootstrapState | null>(null);
   const [profile, setProfile] = useState<AibbProfile>(DEFAULT_PROFILE);
-  const [mode, setMode] = useState<ChatMode | null>(defaultMode);
+  const [mode, setMode] = useState<ChatMode>(defaultMode);
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<TimelineMessage[]>([]);
   const [streamingReply, setStreamingReply] = useState("");
@@ -559,7 +555,7 @@ export function ChatPanel({ defaultMode = null }: ChatPanelProps) {
   const [linkError, setLinkError] = useState<string | null>(null);
   const [vocabExport, setVocabExport] = useState<VocabExportResult | null>(null);
   const [exporting, setExporting] = useState(false);
-  const modeRef = useRef<ChatMode | null>(null);
+  const modeRef = useRef<ChatMode>("chat");
   modeRef.current = mode;
 
   useEffect(() => {
@@ -784,10 +780,10 @@ export function ChatPanel({ defaultMode = null }: ChatPanelProps) {
       setActiveRequestId(null);
       setStreamingReply("");
     }));
-    // The pet click shows the window again → land on the mode chooser
-    // (普通对话 / 词汇助手) instead of the last used mode.
+    // The pet click shows the window again → land back on the ordinary AIbb
+    // chat (default mode) with a clean timeline.
     installListener(listenChatOpened(() => {
-      setMode(null);
+      setMode("chat");
       setStreamingReply("");
       setActiveRequestId(null);
       activeRequest.current = null;
@@ -855,7 +851,7 @@ export function ChatPanel({ defaultMode = null }: ChatPanelProps) {
     }
   }, [mode]);
 
-  function enterMode(next: ChatMode | null) {
+  function enterMode(next: ChatMode) {
     setError(null);
     setMode(next);
     setMessages([]);
@@ -964,7 +960,7 @@ export function ChatPanel({ defaultMode = null }: ChatPanelProps) {
   if (bootstrap && !bootstrap.apiConfigured) {
     return (
       <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
-        <ChatHeader profile={profile} totalOutings={outingStats?.totalOutings ?? null} />
+        <ChatHeader profile={profile} mode="chat" totalOutings={outingStats?.totalOutings ?? null} />
         <section className="first-run-card" aria-label="快速上手">
           <span className="first-run-sparkle" aria-hidden="true">✦</span>
           <h2>你好呀！</h2>
@@ -1009,53 +1005,13 @@ export function ChatPanel({ defaultMode = null }: ChatPanelProps) {
     );
   }
 
-  if (mode === null) {
-    return (
-      <main className="panel chat-panel" aria-label="选择对话模式">
-        <ChatHeader profile={profile} totalOutings={outingStats?.totalOutings ?? null} />
-        <section className="mode-chooser" aria-label="对话模式选择">
-          <h2>想用哪种方式？</h2>
-          <p>点开对话窗后都可以在这里重新选择。</p>
-          <div className="mode-options">
-            <button
-              aria-label="进入 AIbb 对话"
-              className="mode-card"
-              type="button"
-              onClick={() => enterMode("chat")}
-            >
-              <span className="mode-card-icon" aria-hidden="true">💬</span>
-              <strong>AIbb 对话</strong>
-              <span>原来的快乐出游聊天：出去玩、聊日常、带新鲜事回来。</span>
-            </button>
-            <button
-              aria-label="进入词汇助手"
-              className="mode-card"
-              type="button"
-              onClick={() => enterMode("vocab")}
-            >
-              <span className="mode-card-icon" aria-hidden="true">📚</span>
-              <strong>词汇助手</strong>
-              <span>输入英文术语，按标准化词条模板解析收录，20 条自动提醒规划。</span>
-            </button>
-          </div>
-        </section>
-        {error && (
-          <p className="chat-feedback" role="alert">
-            <span className="chat-error-code">{error.code}</span>
-            <span>{error.message}</span>
-          </p>
-        )}
-      </main>
-    );
-  }
-
   return (
     <main className="panel chat-panel" aria-label={`${profile.name} 聊天`}>
       <ChatHeader
         profile={profile}
         totalOutings={outingStats?.totalOutings ?? null}
         mode={mode}
-        onSwitchMode={() => enterMode(null)}
+        onSwitchMode={() => enterMode(mode === "chat" ? "vocab" : "chat")}
         onExport={() => void exportGlossary()}
         exporting={exporting}
       />

@@ -3,7 +3,15 @@ use crate::{
     error::AppError,
 };
 
-use super::{MemoryRepository, CHAT_CHANNEL};
+use super::{MemoryRepository, CHAT_CHANNEL, VOCAB_CHANNEL};
+
+/// How many recent messages to inject for the ordinary chat: keep it thin so
+/// the model leans on its own thinking.
+const CHAT_RECENT_MESSAGES: usize = 8;
+/// The vocabulary assistant maintains its virtual glossary (V 编号、重复计数、
+/// 20 条阈值) inside the conversation, so it needs a wide enough window to see
+/// the entries it must count (≈ 40 独立词条).
+const VOCAB_RECENT_MESSAGES: usize = 80;
 
 pub struct ContextBuilder {
     repository: MemoryRepository,
@@ -25,9 +33,15 @@ impl ContextBuilder {
         channel: &str,
         current_input: impl Into<String>,
     ) -> Result<MemoryContext, AppError> {
-        // Keep the injected conversation thin (a few recent turns) so the
-        // model leans on its own thinking rather than a wall of history.
-        let snapshot = self.repository.context_snapshot_in(channel, 8).await?;
+        // Keep the injected conversation thin for ordinary chat; the
+        // vocabulary channel gets a wide window so the model can actually
+        // count and number the entries it maintains.
+        let recent_limit = if channel == VOCAB_CHANNEL {
+            VOCAB_RECENT_MESSAGES
+        } else {
+            CHAT_RECENT_MESSAGES
+        };
+        let snapshot = self.repository.context_snapshot_in(channel, recent_limit).await?;
         let last_assistant_paragraph = snapshot
             .newest_assistant_message
             .and_then(|message| last_non_empty_paragraph(&message.content));

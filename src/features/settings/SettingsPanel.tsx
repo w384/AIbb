@@ -114,6 +114,9 @@ function publicError(reason: unknown): AppErrorPayload {
 
 export function SettingsPanel() {
   const [settings, setSettings] = useState<ApiSettings>(EMPTY_SETTINGS);
+  // 最近一次成功持久化的设置快照：每个分区保存时只提交自己分区的字段，
+  // 其它分区的未保存改动不会被顺带写库。
+  const [saved, setSaved] = useState<ApiSettings>(EMPTY_SETTINGS);
   const [persona, setPersona] = useState("");
   const [vocabEnv, setVocabEnv] = useState("");
   const [profile, setProfile] = useState<AibbProfile>(EMPTY_PROFILE);
@@ -130,6 +133,7 @@ export function SettingsPanel() {
   const [confirmingClearVocab, setConfirmingClearVocab] = useState(false);
   const [settingsInFlight, setSettingsInFlight] = useState(false);
   const [profileInFlight, setProfileInFlight] = useState(false);
+  const [vocabInFlight, setVocabInFlight] = useState(false);
   const [archive, setArchive] = useState<ArchiveSettings | null>(null);
   const [archiveError, setArchiveError] = useState<AppErrorPayload | null>(null);
   const [archiveNotice, setArchiveNotice] = useState<string | null>(null);
@@ -143,7 +147,9 @@ export function SettingsPanel() {
     void loadSettings()
       .then((loadedSettings) => {
         if (!disposed) {
-          setSettings(withProviderDefaults(loadedSettings));
+          const normalized = withProviderDefaults(loadedSettings);
+          setSettings(normalized);
+          setSaved(normalized);
           setPersona(loadedSettings.persona ?? "");
           setVocabEnv(loadedSettings.vocabEnv ?? "");
           setApiKey("");
@@ -195,12 +201,61 @@ export function SettingsPanel() {
     clearPendingAvatar();
   }
 
+  /** 最近一次持久化设置构成的基线载荷；各分区只替换自己负责的字段。 */
+  function savedBase(): SaveSettings {
+    return {
+      apiBase: saved.apiBase,
+      apiKey: null,
+      model: saved.model,
+      webMode: saved.webMode,
+      alwaysOnTop: saved.alwaysOnTop,
+      autostart: saved.autostart,
+      persona: saved.persona,
+      vocabEnv: saved.vocabEnv,
+    };
+  }
+
+  /** API 设置分区的载荷：用表单当前值，其它分区用已保存值。 */
+  function apiPayload(): SaveSettings {
+    const replacementKey = apiKey.trim();
+    return {
+      ...savedBase(),
+      apiBase: settings.apiBase.trim(),
+      apiKey: replacementKey ? replacementKey : null,
+      model: settings.model.trim(),
+      webMode: settings.webMode,
+      alwaysOnTop: settings.alwaysOnTop,
+      autostart: settings.autostart,
+    };
+  }
+
+  function markSaved(payload: SaveSettings, submittedKey: string) {
+    setSaved((current) => ({
+      ...current,
+      apiBase: payload.apiBase,
+      model: payload.model,
+      webMode: payload.webMode,
+      alwaysOnTop: payload.alwaysOnTop,
+      autostart: payload.autostart,
+      persona: payload.persona,
+      vocabEnv: payload.vocabEnv,
+      apiConfigured: current.apiConfigured || Boolean(payload.apiKey),
+    }));
+    setSettings((current) => ({
+      ...current,
+      apiBase: payload.apiBase,
+      model: payload.model,
+      apiConfigured: current.apiConfigured || Boolean(payload.apiKey),
+    }));
+    setApiKey((current) => (current === submittedKey ? "" : current));
+  }
+
   async function save(event: FormEvent) {
     event.preventDefault();
     if (settingsInFlight) return;
     setError(null);
     setNotice(null);
-    const payload = currentPayload();
+    const payload = apiPayload();
     const submittedKey = apiKey;
     setSettingsInFlight(true);
     try {
@@ -214,25 +269,11 @@ export function SettingsPanel() {
     }
   }
 
-  function currentPayload(): SaveSettings {
-    const replacementKey = apiKey.trim();
-    return {
-      apiBase: settings.apiBase.trim(),
-      apiKey: replacementKey ? replacementKey : null,
-      model: settings.model.trim(),
-      webMode: settings.webMode,
-      alwaysOnTop: settings.alwaysOnTop,
-      autostart: settings.autostart,
-      persona: persona.trim(),
-      vocabEnv: vocabEnv.trim(),
-    };
-  }
-
   async function saveAndTest() {
     if (settingsInFlight) return;
     setError(null);
     setNotice(null);
-    const payload = currentPayload();
+    const payload = apiPayload();
     const submittedKey = apiKey;
     setSettingsInFlight(true);
     try {
@@ -245,16 +286,6 @@ export function SettingsPanel() {
     } finally {
       setSettingsInFlight(false);
     }
-  }
-
-  function markSaved(payload: SaveSettings, submittedKey: string) {
-    setSettings((current) => ({
-      ...current,
-      apiBase: payload.apiBase,
-      model: payload.model,
-      apiConfigured: current.apiConfigured || Boolean(payload.apiKey),
-    }));
-    setApiKey((current) => (current === submittedKey ? "" : current));
   }
 
   async function selectAvatar(event: ChangeEvent<HTMLInputElement>) {
@@ -280,40 +311,57 @@ export function SettingsPanel() {
     }
   }
 
-  async function saveProfile() {
-    if (profileInFlight) return;
-    setProfileError(null);
-    setNotice(null);
-    setProfileInFlight(true);
-    try {
-      if (pendingAvatar) {
-        let avatarSaved: AibbProfile;
-        try {
-          avatarSaved = await saveAibbAvatar(pendingAvatar.bytes, pendingAvatar.mimeType);
-        } catch (reason) {
-          restoreProfileDraft();
-          setProfileError(publicError(reason));
-          return;
-        }
-        try {
-          const savedProfile = await saveAibbName(profileName.trim());
-          applyCurrentProfile(savedProfile);
-          setNotice("AIbb 资料已保存");
-        } catch {
-          applyCurrentProfile(avatarSaved);
-          setProfileError({
-            code: "profilePartiallySaved",
-            message: "头像已保存，昵称未保存。请重新输入昵称后重试。",
-          });
-        }
-        return;
+  /** 保存头像与昵称；成功返回 true，失败时已设置 profileError 并返回 false。 */
+  async function persistProfile(): Promise<boolean> {
+    if (pendingAvatar) {
+      let avatarSaved: AibbProfile;
+      try {
+        avatarSaved = await saveAibbAvatar(pendingAvatar.bytes, pendingAvatar.mimeType);
+      } catch (reason) {
+        restoreProfileDraft();
+        setProfileError(publicError(reason));
+        return false;
       }
+      try {
+        const savedProfile = await saveAibbName(profileName.trim());
+        applyCurrentProfile(savedProfile);
+        return true;
+      } catch {
+        applyCurrentProfile(avatarSaved);
+        setProfileError({
+          code: "profilePartiallySaved",
+          message: "头像已保存，昵称未保存。请重新输入昵称后重试。",
+        });
+        return false;
+      }
+    }
+    try {
       const savedProfile = await saveAibbName(profileName.trim());
       applyCurrentProfile(savedProfile);
-      setNotice("AIbb 资料已保存");
+      return true;
     } catch (reason) {
       restoreProfileDraft();
       setProfileError(publicError(reason));
+      return false;
+    }
+  }
+
+  /** AIbb 基本资料：头像 + 昵称 + 性格定制一起保存。 */
+  async function saveBasic() {
+    if (profileInFlight || settingsInFlight) return;
+    setProfileError(null);
+    setError(null);
+    setNotice(null);
+    setProfileInFlight(true);
+    try {
+      const profileOk = await persistProfile();
+      if (!profileOk) return;
+      const payload = { ...savedBase(), persona: persona.trim() };
+      await saveSettings(payload);
+      setSaved((current) => ({ ...current, persona: payload.persona }));
+      setNotice("AIbb 资料已保存");
+    } catch (reason) {
+      setError(publicError(reason));
     } finally {
       setProfileInFlight(false);
     }
@@ -332,6 +380,24 @@ export function SettingsPanel() {
       setProfileError(publicError(reason));
     } finally {
       setProfileInFlight(false);
+    }
+  }
+
+  /** 词汇助手分区：只保存大环境。 */
+  async function saveVocab() {
+    if (vocabInFlight || settingsInFlight) return;
+    setError(null);
+    setNotice(null);
+    const payload = { ...savedBase(), vocabEnv: vocabEnv.trim() };
+    setVocabInFlight(true);
+    try {
+      await saveSettings(payload);
+      setSaved((current) => ({ ...current, vocabEnv: payload.vocabEnv }));
+      setNotice("词汇助手设置已保存");
+    } catch (reason) {
+      setError(publicError(reason));
+    } finally {
+      setVocabInFlight(false);
     }
   }
 
@@ -537,16 +603,24 @@ export function SettingsPanel() {
         <span className="settings-mark" aria-hidden="true">◎</span>
         <div>
           <h1>AIbb 设置</h1>
-          <p>配置一个大模型，AIbb 就可以出去玩啦。</p>
+          <p>四类设置分开保存，互不影响。</p>
         </div>
       </header>
 
-      <form className="settings-form" aria-busy={settingsInFlight || profileInFlight} onSubmit={save}>
-        <section className="profile-card" aria-labelledby="profile-heading">
+      <form
+        className="settings-form"
+        aria-busy={settingsInFlight || profileInFlight || vocabInFlight || archiveInFlight}
+        onSubmit={save}
+      >
+        {/* ① AIbb 基本资料：头像、昵称、性格定制 */}
+        <section className="settings-card" aria-labelledby="basic-heading">
+          <h2 id="basic-heading">AIbb 基本资料</h2>
+          <p className="settings-hint">
+            头像、昵称与性格定制只保存在这台设备上，保存后从下一条消息开始生效。
+          </p>
           <div className="profile-preview" aria-label="AIbb 资料预览">
             <span className="profile-avatar"><AibbAvatar avatarDataUrl={pendingAvatarDataUrl ?? profile.avatarDataUrl} name={profileName.trim() || profile.name} /></span>
             <div>
-              <h2 id="profile-heading">AIbb 资料</h2>
               <strong>{profileName.trim() || profile.name}</strong>
               <p>昵称和头像只保存在这台设备上。</p>
             </div>
@@ -565,172 +639,189 @@ export function SettingsPanel() {
               <input aria-label="选择头像" accept="image/png,image/jpeg,image/webp" disabled={profileInFlight} type="file" onChange={(event) => void selectAvatar(event)} />
             </label>
             <button className="button secondary" disabled={profileInFlight || !(pendingAvatarDataUrl ?? profile.avatarDataUrl)} type="button" onClick={() => void resetAvatar()}>恢复默认头像</button>
-            <button className="button primary" disabled={profileInFlight} type="button" onClick={() => void saveProfile()}>保存 AIbb 资料</button>
           </div>
-        </section>
-        {profileError && <p className="feedback error" role="alert">{profileError.message}</p>}
-
-        <h2 className="settings-section-title">大模型连接</h2>
-
-        <label className="field">
-          <span>API 地址</span>
-          <input
-            type="url"
-            disabled={settingsInFlight}
-            value={settings.apiBase}
-            onChange={(event) => setSettings({ ...settings, apiBase: event.target.value })}
-            placeholder="https://api.deepseek.com"
-          />
-        </label>
-
-        <div className="field">
-          <label htmlFor="api-key">API Key</label>
-          <input
-            id="api-key"
-            type="password"
-            disabled={settingsInFlight}
-            autoComplete="new-password"
-            value={apiKey}
-            onChange={(event) => setApiKey(event.target.value)}
-            placeholder={settings.apiConfigured ? "已安全保存" : "请输入 API Key"}
-          />
-          <small>留空表示继续使用已保存的密钥</small>
-        </div>
-
-        <div className="settings-grid">
-          <label className="field">
-            <span>模型名称</span>
-            <input
-              disabled={settingsInFlight}
-              required
-              value={settings.model}
-              onChange={(event) => setSettings({ ...settings, model: event.target.value })}
-              placeholder="deepseek-v4-flash"
-            />
-          </label>
-          <label className="field">
-            <span>联网模式</span>
-            <select
-              disabled={settingsInFlight}
-              value={settings.webMode}
-              onChange={(event) => setSettings({ ...settings, webMode: event.target.value as WebMode })}
-            >
-              <option value="auto">自动探测</option>
-              <option value="force">强制原生联网</option>
-              <option value="off">关闭原生联网</option>
-            </select>
-          </label>
-        </div>
-
-        <div className="model-actions">
-          <button
-            aria-label="检查可用模型"
-            className="text-button model-check-button"
-            disabled={checkingModels || !settings.apiBase.trim()}
-            type="button"
-            onClick={() => void checkAvailableModels()}
-          >
-            {checkingModels ? "正在查询…" : "检查可用模型"}
-          </button>
-          <small className="model-hint">
-            DeepSeek 官方模型：deepseek-v4-flash、deepseek-v4-pro
-          </small>
-        </div>
-
-        {availableModels !== null && availableModels.length > 0 && (
-          <div className="model-list" aria-label="可用模型">
-            <span className="model-list-label">该 API 可用的模型：</span>
-            <div className="model-chips">
-              {availableModels.map((model) => {
-                const current = settings.model.trim() === model;
-                return (
-                  <button
-                    key={model}
-                    aria-pressed={current}
-                    className={`model-chip${current ? " selected" : ""}`}
-                    type="button"
-                    onClick={() => setSettings({ ...settings, model })}
-                  >
-                    {model}
-                  </button>
-                );
-              })}
+          <div className="persona-editor">
+            <h3>性格定制</h3>
+            <p className="settings-hint">给 AIbb 一套人设，聊天和出游日记都会用这种口吻说话。</p>
+            <div className="persona-presets" aria-label="性格模板">
+              {PERSONA_PRESETS.map((preset) => (
+                <button
+                  key={preset.label}
+                  className={`persona-chip${persona.trim() === preset.text ? " selected" : ""}`}
+                  type="button"
+                  onClick={() => setPersona(preset.text)}
+                >
+                  {preset.label}
+                </button>
+              ))}
             </div>
+            <label className="field">
+              <span>自定义性格设定</span>
+              <textarea
+                aria-label="自定义性格设定"
+                disabled={profileInFlight}
+                maxLength={2000}
+                rows={4}
+                placeholder="例如：你是一只爱冒险的橘猫，话痨又嘴甜，总想拉我一起去看世界……"
+                value={persona}
+                onChange={(event) => setPersona(event.target.value)}
+              />
+              <small>最多 2000 字；留空使用默认的活泼性格。</small>
+            </label>
           </div>
-        )}
-        {availableModels !== null &&
-          availableModels.length > 0 &&
-          settings.model.trim() &&
-          !availableModels.includes(settings.model.trim()) && (
-            <p className="feedback warning" role="status">
-              当前模型「{settings.model.trim()}」不在该 API 的可用列表里，点上方名称即可填入。
-            </p>
-          )}
-
-        <div className="toggle-row">
-          <label className="toggle-option">
-            <input
-              type="checkbox"
-              disabled={settingsInFlight}
-              checked={settings.alwaysOnTop}
-              onChange={(event) => setSettings({ ...settings, alwaysOnTop: event.target.checked })}
-            />
-            <span>始终置顶</span>
-          </label>
-          <label className="toggle-option">
-            <input
-              type="checkbox"
-              disabled={settingsInFlight}
-              checked={settings.autostart}
-              onChange={(event) => setSettings({ ...settings, autostart: event.target.checked })}
-            />
-            <span>开机启动</span>
-          </label>
-        </div>
-
-        <section className="persona-editor" aria-labelledby="persona-heading">
-          <h2 id="persona-heading">性格定制</h2>
-          <p className="settings-hint">
-            给 AIbb 一套人设，聊天和出游日记都会用这种口吻说话。保存后从下一条消息开始生效。
-          </p>
-          <div className="persona-presets" aria-label="性格模板">
-            {PERSONA_PRESETS.map((preset) => (
-              <button
-                key={preset.label}
-                className={`persona-chip${persona.trim() === preset.text ? " selected" : ""}`}
-                type="button"
-                onClick={() => setPersona(preset.text)}
-              >
-                {preset.label}
-              </button>
-            ))}
+          {profileError && <p className="feedback error" role="alert">{profileError.message}</p>}
+          <div className="button-row">
+            <button
+              className="button primary"
+              disabled={profileInFlight || settingsInFlight}
+              type="button"
+              onClick={() => void saveBasic()}
+            >
+              保存 AIbb 资料
+            </button>
           </div>
-          <label className="field">
-            <span>自定义性格设定</span>
-            <textarea
-              aria-label="自定义性格设定"
-              disabled={settingsInFlight}
-              maxLength={2000}
-              rows={4}
-              placeholder="例如：你是一只爱冒险的橘猫，话痨又嘴甜，总想拉我一起去看世界……"
-              value={persona}
-              onChange={(event) => setPersona(event.target.value)}
-            />
-            <small>最多 2000 字；留空使用默认的活泼性格。</small>
-          </label>
         </section>
 
-        <section className="vocab-settings" aria-labelledby="vocab-heading">
+        {/* ② API 设置 */}
+        <section className="settings-card" aria-labelledby="api-heading">
+          <h2 id="api-heading">API 设置</h2>
+          <p className="settings-hint">配置一个大模型，AIbb 就可以出去玩啦。</p>
+          <label className="field">
+            <span>API 地址</span>
+            <input
+              type="url"
+              disabled={settingsInFlight}
+              value={settings.apiBase}
+              onChange={(event) => setSettings({ ...settings, apiBase: event.target.value })}
+              placeholder="https://api.deepseek.com"
+            />
+          </label>
+
+          <div className="field">
+            <label htmlFor="api-key">API Key</label>
+            <input
+              id="api-key"
+              type="password"
+              disabled={settingsInFlight}
+              autoComplete="new-password"
+              value={apiKey}
+              onChange={(event) => setApiKey(event.target.value)}
+              placeholder={settings.apiConfigured ? "已安全保存" : "请输入 API Key"}
+            />
+            <small>留空表示继续使用已保存的密钥</small>
+          </div>
+
+          <div className="settings-grid">
+            <label className="field">
+              <span>模型名称</span>
+              <input
+                disabled={settingsInFlight}
+                required
+                value={settings.model}
+                onChange={(event) => setSettings({ ...settings, model: event.target.value })}
+                placeholder="deepseek-v4-flash"
+              />
+            </label>
+            <label className="field">
+              <span>联网模式</span>
+              <select
+                disabled={settingsInFlight}
+                value={settings.webMode}
+                onChange={(event) => setSettings({ ...settings, webMode: event.target.value as WebMode })}
+              >
+                <option value="auto">自动探测</option>
+                <option value="force">强制原生联网</option>
+                <option value="off">关闭原生联网</option>
+              </select>
+            </label>
+          </div>
+
+          <div className="model-actions">
+            <button
+              aria-label="检查可用模型"
+              className="text-button model-check-button"
+              disabled={checkingModels || !settings.apiBase.trim()}
+              type="button"
+              onClick={() => void checkAvailableModels()}
+            >
+              {checkingModels ? "正在查询…" : "检查可用模型"}
+            </button>
+            <small className="model-hint">
+              DeepSeek 官方模型：deepseek-v4-flash、deepseek-v4-pro
+            </small>
+          </div>
+
+          {availableModels !== null && availableModels.length > 0 && (
+            <div className="model-list" aria-label="可用模型">
+              <span className="model-list-label">该 API 可用的模型：</span>
+              <div className="model-chips">
+                {availableModels.map((model) => {
+                  const current = settings.model.trim() === model;
+                  return (
+                    <button
+                      key={model}
+                      aria-pressed={current}
+                      className={`model-chip${current ? " selected" : ""}`}
+                      type="button"
+                      onClick={() => setSettings({ ...settings, model })}
+                    >
+                      {model}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+          {availableModels !== null &&
+            availableModels.length > 0 &&
+            settings.model.trim() &&
+            !availableModels.includes(settings.model.trim()) && (
+              <p className="feedback warning" role="status">
+                当前模型「{settings.model.trim()}」不在该 API 的可用列表里，点上方名称即可填入。
+              </p>
+            )}
+
+          <div className="toggle-row">
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                disabled={settingsInFlight}
+                checked={settings.alwaysOnTop}
+                onChange={(event) => setSettings({ ...settings, alwaysOnTop: event.target.checked })}
+              />
+              <span>始终置顶</span>
+            </label>
+            <label className="toggle-option">
+              <input
+                type="checkbox"
+                disabled={settingsInFlight}
+                checked={settings.autostart}
+                onChange={(event) => setSettings({ ...settings, autostart: event.target.checked })}
+              />
+              <span>开机启动</span>
+            </label>
+          </div>
+
+          <div className="button-row">
+            <button className="button secondary" type="submit" disabled={settingsInFlight}>仅保存</button>
+            <button className="button primary" type="button" disabled={settingsInFlight} onClick={() => void saveAndTest()}>
+              保存并测试
+            </button>
+          </div>
+        </section>
+
+        {/* ③ 词汇助手 */}
+        <section className="settings-card" aria-labelledby="vocab-heading">
           <h2 id="vocab-heading">词汇助手</h2>
           <p className="settings-hint">
-            左键点开对话窗后选择「词汇助手」，就能按标准化词条模板收录英文术语。
+            在对话窗右上角点「词汇」进入词汇助手，输入英文术语即可按标准词条模板收录。
             这里设置它默认工作的大环境（领域），留空使用内置的 Agent-LLM 开发领域。
           </p>
           <label className="field">
             <span>词汇助手大环境</span>
             <textarea
               aria-label="词汇助手大环境"
-              disabled={settingsInFlight}
+              disabled={vocabInFlight}
               maxLength={500}
               rows={3}
               placeholder="例如：Agent-LLM 开发、汽车电子、金融风控……"
@@ -741,8 +832,15 @@ export function SettingsPanel() {
           </label>
           <div className="button-row">
             <button
-              className="text-button danger"
-              disabled={settingsInFlight}
+              className="button primary"
+              disabled={vocabInFlight || settingsInFlight}
+              type="button"
+              onClick={() => void saveVocab()}
+            >
+              保存词汇助手设置
+            </button>
+            <button
+              className="button danger-button"
               type="button"
               onClick={() => setConfirmingClearVocab(true)}
             >
@@ -751,8 +849,9 @@ export function SettingsPanel() {
           </div>
         </section>
 
+        {/* ④ 文件归档 */}
         {archive && (
-          <section className="archive-settings" aria-labelledby="archive-heading">
+          <section className="settings-card" aria-labelledby="archive-heading">
             <h2 id="archive-heading">文件归档</h2>
             <p className="settings-hint">
               把文件拖到 AIbb 身上，AIbb 会自动分类归档到项目目录，原文件保留不动。
@@ -891,13 +990,6 @@ export function SettingsPanel() {
             {archiveNotice && <p className="feedback success" role="status">{archiveNotice}</p>}
           </section>
         )}
-
-        <div className="button-row">
-          <button className="button secondary" type="submit" disabled={settingsInFlight}>仅保存</button>
-          <button className="button primary" type="button" disabled={settingsInFlight} onClick={() => void saveAndTest()}>
-            保存并测试
-          </button>
-        </div>
 
         <div className="secondary-actions">
           <button className="text-button" type="button" onClick={() => setConfirmingClear(true)}>清除记忆</button>

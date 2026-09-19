@@ -846,28 +846,36 @@ describe("ChatPanel", () => {
     expect(listenChatError).toHaveBeenCalledTimes(1);
   });
 
-  it("starts on the mode chooser with the two assistant options", async () => {
+  it("opens in the ordinary AIbb chat and toggles modes via the header button", async () => {
     render(<ChatPanel />);
 
-    expect(await screen.findByRole("heading", { name: "想用哪种方式？" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "进入 AIbb 对话" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "进入词汇助手" })).toBeVisible();
-    expect(screen.queryByRole("textbox", { name: "消息" })).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "进入 AIbb 对话" }));
-    expect(await screen.findByRole("textbox", { name: "消息" })).toBeVisible();
+    const editor = await screen.findByRole("textbox", { name: "消息" });
     expect(screen.getByRole("heading", { name: "AIbb" })).toBeVisible();
+    expect(screen.getByText("准备出去玩")).toBeVisible();
+    expect(screen.getByRole("button", { name: "切换到词汇助手" })).toHaveTextContent("词汇");
+
+    fireEvent.click(screen.getByRole("button", { name: "切换到词汇助手" }));
+
+    expect(await screen.findByPlaceholderText(/输入一个英文术语/)).toBeVisible();
+    expect(screen.getByRole("heading", { name: "AIbb" })).toBeVisible();
+    expect(screen.getByText("输入术语，按标准词条模板解析")).toBeVisible();
+    expect(screen.getByRole("button", { name: "切换到AIbb 对话" })).toHaveTextContent("对话");
+    expect(editor).toBeVisible();
   });
 
-  it("returns to the chooser when the pet click re-opens the window", async () => {
+  it("returns to the ordinary AIbb chat when the pet click re-opens the window", async () => {
     render(<ChatPanel defaultMode="chat" />);
     await screen.findByRole("textbox", { name: "消息" });
     await waitFor(() => expect(listenChatOpened).toHaveBeenCalledTimes(1));
 
+    fireEvent.click(screen.getByRole("button", { name: "切换到词汇助手" }));
+    expect(await screen.findByPlaceholderText(/输入一个英文术语/)).toBeVisible();
+
     act(() => chatOpenedListener());
 
-    expect(screen.getByRole("button", { name: "进入 AIbb 对话" })).toBeVisible();
-    expect(screen.getByRole("button", { name: "进入词汇助手" })).toBeVisible();
+    expect(await screen.findByText("准备出去玩")).toBeVisible();
+    expect(screen.getByRole("button", { name: "切换到词汇助手" })).toBeVisible();
+    expect(screen.queryByPlaceholderText(/输入一个英文术语/)).not.toBeInTheDocument();
   });
 
   it("routes vocabulary terms through the vocab channel and replays its history", async () => {
@@ -876,11 +884,11 @@ describe("ChatPanel", () => {
       { id: "vocab-2", role: "assistant", content: "# agent\n英 /ˈeɪdʒənt/", createdAt: 2 },
     ]);
     render(<ChatPanel />);
-    await screen.findByRole("button", { name: "进入词汇助手" });
+    await screen.findByRole("textbox", { name: "消息" });
 
-    fireEvent.click(screen.getByRole("button", { name: "进入词汇助手" }));
+    fireEvent.click(screen.getByRole("button", { name: "切换到词汇助手" }));
     const editor = await screen.findByRole("textbox", { name: "消息" });
-    expect(screen.getByRole("heading", { name: /词汇助手/ })).toBeVisible();
+    expect(screen.getByText("输入术语，按标准词条模板解析")).toBeVisible();
     expect(await screen.findByText(/^# agent/)).toBeVisible();
     expect(screen.getByPlaceholderText(/输入一个英文术语/)).toBeVisible();
 

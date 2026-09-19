@@ -47,8 +47,8 @@ pub const VOCAB_SYSTEM_INSTRUCTION: &str = r#"# 角色：领域词汇中台助�
 # {术语}
 英 /xxx/ 美 /xxx/ 谐音：**xxx**
 
-释义：n./v./adj. 【优先结合当前工作领域做场景化释义，拒绝普通词典泛泛解释；说明该术语在系统中的角色、参与流程、关联已有词条；专有工具写明工程用途】
-拆分：词根词缀 / 缩写全称 / 项目来源 / 衍生复合词、函数名；普通基础词注明无特殊词根。
+释义：n./v./adj. 只写该词汇的含义，不同词性最多各给 3 个词义；与环境相关的词义放在第一个词义；禁止长篇展开流程、角色或词条关联。
+拆分：仅当术语是组合词/复合词时才输出本类目（词根拆解、缩写全称、项目来源、衍生复合词、函数名）；单个基础词汇不要输出「拆分」类目。
 
 > 规则执行：
 - 检索命中已有词条：写「检索词库，已有编号：Vxx {术语}，不新增独立词条；仅更新重复提问次数计数」
@@ -71,11 +71,11 @@ pub const VOCAB_SYSTEM_INSTRUCTION: &str = r#"# 角色：领域词汇中台助�
 2. 初次规划允许部分词汇归入“待细化”临时组；不追求一步到位精准分组。
 3. 输出规划格式：列出顶层大类名称 + 该大类下包含的词条编号列表。
 
-## 虚拟词库初始快照（{大环境}领域基线）
+## 虚拟词库与计数规则（{大环境}领域基线）
 > 当前领域：{大环境}
-> 基线存量词条：V01-V85，总独立词条：111条
-> 下一条新增编号从 V86开始自增
-> 【新增计数】：0（仅统计导入本prompt之后新增的独立词条；基线存量V01-V85不计入该计数，用于20条阈值提醒）
+> 本对话的虚拟词库从空开始：收录的第一个词条编号为 V1，词库总条目从 1 起计。
+> 编号与计数只依据当前对话上下文里实际出现的词条，从 1 连续编号；严禁引用、推算对话上下文之外的任何词库、基线或存量数据。
+> 累计新增满 20 条独立词条（不含重复命中）时触发阈值提醒。
 
 ## 用户交互约定
 1. 用户输入单个术语 → 输出完整词条模板；
@@ -314,13 +314,46 @@ mod tests {
 
         assert!(prompt.system_instruction.contains("默认领域：汽车电子开发"));
         assert!(prompt.system_instruction.contains("当前领域：汽车电子开发"));
-        assert!(prompt.system_instruction.contains("基线存量词条：V01-V85"));
-        assert!(prompt.system_instruction.contains("V86开始自增"));
-        assert!(prompt.system_instruction.contains("20条独立词条"));
+        assert!(prompt.system_instruction.contains("收录的第一个词条编号为 V1"));
+        assert!(prompt.system_instruction.contains("20 条独立词条"));
         assert!(!prompt.system_instruction.contains("{大环境}"));
         assert_eq!(prompt.current_input, "agent");
         assert_eq!(prompt.summary, None);
         assert_eq!(prompt.web_material, None);
+    }
+
+    #[test]
+    fn vocab_prompt_counts_only_what_is_visible_and_keeps_entries_compact() {
+        let prompt = build_vocab_prompt(context_without_direction(), "");
+
+        // 新对话从 V1 开始，绝不引用任何外部基线/存量词库。
+        assert!(!prompt.system_instruction.contains("V01"));
+        assert!(!prompt.system_instruction.contains("V85"));
+        assert!(!prompt.system_instruction.contains("V86"));
+        assert!(!prompt.system_instruction.contains("基线存量词条"));
+        assert!(prompt
+            .system_instruction
+            .contains("只依据当前对话上下文里实际出现的词条"));
+        assert!(prompt
+            .system_instruction
+            .contains("严禁引用、推算对话上下文之外的任何词库"));
+
+        // 释义只写含义、最多 3 个词义、环境义放第一。
+        assert!(prompt.system_instruction.contains("只写该词汇的含义"));
+        assert!(prompt
+            .system_instruction
+            .contains("不同词性最多各给 3 个词义"));
+        assert!(prompt
+            .system_instruction
+            .contains("与环境相关的词义放在第一个词义"));
+
+        // 拆分仅在组合词出现；单词汇不输出该类别。
+        assert!(prompt
+            .system_instruction
+            .contains("仅当术语是组合词/复合词时才输出本类目"));
+        assert!(prompt
+            .system_instruction
+            .contains("单个基础词汇不要输出「拆分」类目"));
     }
 
     #[test]

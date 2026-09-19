@@ -792,15 +792,16 @@ img.aibb-avatar {
 .persona-editor {
   display: grid;
   gap: 10px;
-  padding: 14px;
-  border: 1px solid #e3e9f2;
+  padding: 12px;
+  border: 1px solid var(--ai-border);
   border-radius: 14px;
-  background: #fafcff;
+  background: rgb(255 255 255 / 55%);
 }
 
-.persona-editor h2 {
+.persona-editor h3 {
   margin: 0;
-  font-size: 14px;
+  color: var(--ai-text-heading);
+  font-size: 13px;
 }
 
 .persona-presets {
@@ -1194,29 +1195,27 @@ img.aibb-avatar {
   backdrop-filter: blur(14px);
 }
 
-/* 大区块之间的分组标题，把表单分成资料 / 大模型 / 行为 / 归档几组。 */
-.settings-section-title {
-  margin: 6px 0 -6px;
-  padding-top: 4px;
-  color: var(--ai-text-muted);
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
-  text-transform: uppercase;
-}
-
-.settings-section-title::before {
-  content: "· ";
-  color: var(--ai-brand-blue);
-}
-
-.profile-card {
+/* 设置页四大分区（基本资料 / API 设置 / 词汇助手 / 文件归档）统一卡片外观。 */
+.settings-card {
   display: grid;
-  gap: 14px;
-  padding: 16px;
-  border: 1px solid rgb(96 119 177 / 16%);
+  gap: 12px;
+  padding: 18px;
+  border: 1px solid var(--ai-divider);
   border-radius: 18px;
-  background: linear-gradient(135deg, #f7fbff, #f9f5ff);
+  background: var(--ai-surface-soft);
+}
+
+.settings-card h2 {
+  margin: 0;
+  color: var(--ai-text-heading);
+  font-size: 15px;
+}
+
+.settings-card .settings-hint {
+  margin: -4px 0 0;
+  color: var(--ai-text-muted);
+  font-size: 13px;
+  line-height: 1.6;
 }
 
 .profile-preview {
@@ -1754,26 +1753,6 @@ img.aibb-avatar {
 
 /* ── Archive settings ──────────────────────────────────────────────────── */
 
-.archive-settings {
-  margin-top: 4px;
-  padding: 16px;
-  border: 1px solid var(--ai-border);
-  border-radius: 16px;
-  background: var(--ai-surface-soft);
-}
-
-.archive-settings h2 {
-  margin: 0 0 4px;
-  font-size: 17px;
-}
-
-.settings-hint {
-  margin: 0 0 14px;
-  color: var(--ai-text-muted);
-  font-size: 13px;
-  line-height: 1.6;
-}
-
 .template-editor {
   margin: 12px 0 0;
   padding: 12px;
@@ -1918,12 +1897,7 @@ img.aibb-avatar {
   }
 }
 
-/* ── 词汇助手 & 模式选择 ─────────────────────────────── */
-
-.chat-mode-badge {
-  margin-left: 6px;
-  font-size: 15px;
-}
+/* ── 词汇助手 & 模式切换 ─────────────────────────────── */
 
 .chat-mode-switch {
   flex: 0 0 auto;
@@ -1965,80 +1939,6 @@ img.aibb-avatar {
 .chat-export-button:disabled {
   cursor: default;
   opacity: 0.7;
-}
-
-.mode-chooser {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 8px;
-  padding: 24px 20px 36px;
-  text-align: center;
-}
-
-.mode-chooser h2 {
-  margin: 0;
-  color: var(--ai-text-heading);
-  font-size: 20px;
-  letter-spacing: -0.02em;
-}
-
-.mode-chooser > p {
-  margin: 0 0 10px;
-  color: var(--ai-text-muted);
-  font-size: 13px;
-}
-
-.mode-options {
-  display: flex;
-  width: min(100%, 360px);
-  flex-direction: column;
-  gap: 14px;
-}
-
-.mode-card {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 18px 20px;
-  border: 1px solid var(--ai-divider);
-  border-radius: 20px;
-  color: inherit;
-  background: var(--ai-surface-glass);
-  box-shadow: 0 12px 28px rgb(51 82 139 / 9%);
-  cursor: pointer;
-  text-align: left;
-  transition: transform 150ms ease, box-shadow 150ms ease, border-color 150ms ease;
-}
-
-.mode-card:hover {
-  border-color: var(--ai-brand-ring);
-  box-shadow: 0 16px 34px rgb(51 82 139 / 14%);
-  transform: translateY(-2px);
-}
-
-.mode-card-icon {
-  display: inline-grid;
-  width: 42px;
-  height: 42px;
-  place-items: center;
-  border-radius: 14px;
-  background: var(--ai-surface-tint);
-  font-size: 22px;
-}
-
-.mode-card strong {
-  color: var(--ai-text-heading);
-  font-size: 16px;
-}
-
-.mode-card > span:last-child {
-  color: var(--ai-text-muted);
-  font-size: 12.5px;
-  line-height: 1.55;
 }
 
 .vocab-export-panel {
@@ -2088,23 +1988,5 @@ img.aibb-avatar {
   white-space: nowrap;
   direction: rtl;
   text-align: left;
-}
-
-.vocab-settings {
-  margin-top: 28px;
-  padding: 18px;
-  border: 1px solid var(--ai-divider);
-  border-radius: 18px;
-  background: var(--ai-surface-soft);
-}
-
-.vocab-settings h2 {
-  margin: 0 0 6px;
-  color: var(--ai-text-heading);
-  font-size: 15px;
-}
-
-.vocab-settings .button-row {
-  margin-top: 10px;
 }
 
