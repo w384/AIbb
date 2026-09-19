@@ -1184,6 +1184,47 @@ img.aibb-avatar {
   font-size: 14px;
 }
 
+/* 四大类切换按钮（AIbb 基本资料 / API 设置 / 词汇助手 / 文件归档）。 */
+.settings-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 18px;
+}
+
+.settings-tab {
+  min-height: 42px;
+  padding: 0 10px;
+  border: 1px solid var(--ai-border);
+  border-radius: 13px;
+  color: var(--ai-text-muted);
+  background: var(--ai-surface-soft);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 130ms ease, background 130ms ease, border-color 130ms ease,
+    transform 110ms ease;
+}
+
+.settings-tab:hover {
+  color: var(--ai-text-heading);
+  border-color: var(--ai-brand-ring);
+}
+
+.settings-tab.active {
+  color: #fff;
+  border-color: transparent;
+  background: var(--ai-brand-gradient);
+  box-shadow: 0 8px 16px rgb(69 107 213 / 22%);
+}
+
+@media (min-width: 560px) {
+  .settings-tabs {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+
 .settings-form {
   display: grid;
   gap: 18px;

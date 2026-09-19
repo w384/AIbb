@@ -13,7 +13,7 @@ use crate::{
     domain::Message,
     error::{sanitize_sensitive_text, AppError},
     llm::{ChatMessage, ChatRequest},
-    memory::VOCAB_CHANNEL,
+    memory::{CONTEXT_CHAR_BUDGET, VOCAB_CHANNEL},
     prompts::VOCAB_EXPORT_INSTRUCTION,
 };
 
@@ -73,7 +73,7 @@ pub async fn export_vocab_glossary(
 ) -> Result<VocabExportResult, AppError> {
     let messages = state
         .memory
-        .recent_messages_in(VOCAB_CHANNEL, 120)
+        .recent_messages_by_chars_in(VOCAB_CHANNEL, CONTEXT_CHAR_BUDGET)
         .await?;
     if messages.is_empty() {
         return Err(AppError::new(

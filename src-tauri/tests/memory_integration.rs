@@ -47,7 +47,7 @@ async fn context_survives_reopening_the_database() {
 }
 
 #[tokio::test]
-async fn context_keeps_the_newest_eight_messages_in_chronological_order() {
+async fn context_injects_recent_messages_up_to_the_character_budget() {
     let directory = tempfile::tempdir().unwrap();
     let repository = MemoryRepository::open(directory.path().join("memory.sqlite3")).unwrap();
 
@@ -68,12 +68,10 @@ async fn context_keeps_the_newest_eight_messages_in_chronological_order() {
         .await
         .unwrap();
 
-    assert_eq!(context.recent_messages.len(), 8);
-    assert_eq!(
-        context.recent_messages[0].content,
-        "assistant opening\n\nassistant-37"
-    );
-    assert_eq!(context.recent_messages[7].content, "user-44");
+    // 内容远小于 128K 字符预算 → 全部注入，按时间正序。
+    assert_eq!(context.recent_messages.len(), 45);
+    assert_eq!(context.recent_messages[0].content, "user-0");
+    assert_eq!(context.recent_messages[44].content, "user-44");
     assert_eq!(
         context.last_assistant_paragraph.as_deref(),
         Some("assistant-43")
@@ -81,7 +79,7 @@ async fn context_keeps_the_newest_eight_messages_in_chronological_order() {
 }
 
 #[tokio::test]
-async fn summary_candidate_requires_more_than_twelve_thousand_unicode_characters() {
+async fn summary_candidate_requires_old_content_beyond_the_context_window() {
     let directory = tempfile::tempdir().unwrap();
     let exact_repository = MemoryRepository::open(directory.path().join("exact.sqlite3")).unwrap();
     exact_repository
@@ -95,6 +93,7 @@ async fn summary_candidate_requires_more_than_twelve_thousand_unicode_characters
             .unwrap();
     }
 
+    // 旧内容仍在 128K 上下文窗口内 → 不产生摘要候选。
     assert!(ContextBuilder::new(exact_repository)
         .summary_candidate()
         .await
@@ -103,7 +102,7 @@ async fn summary_candidate_requires_more_than_twelve_thousand_unicode_characters
 
     let above_repository = MemoryRepository::open(directory.path().join("above.sqlite3")).unwrap();
     let old_message = above_repository
-        .append(Role::User, "🙂".repeat(12_001))
+        .append(Role::User, "🙂".repeat(131_000))
         .await
         .unwrap();
     for index in 0..40 {
@@ -113,13 +112,14 @@ async fn summary_candidate_requires_more_than_twelve_thousand_unicode_characters
             .unwrap();
     }
 
+    // 旧内容（131K 字符）超出上下文窗口 → 成为候选，且超过 12K 阈值触发。
     let candidate = ContextBuilder::new(above_repository.clone())
         .summary_candidate()
         .await
         .unwrap()
         .unwrap();
 
-    assert_eq!(candidate.total_characters, 12_001);
+    assert_eq!(candidate.total_characters, 131_000);
     assert_eq!(candidate.messages, vec![old_message]);
     assert_eq!(
         above_repository.recent_messages(100).await.unwrap().len(),
@@ -134,7 +134,7 @@ async fn saved_summary_marks_but_retains_messages_and_survives_restart() {
     let path = directory.path().join("memory.sqlite3");
     let repository = MemoryRepository::open(&path).unwrap();
     let old_message = repository
-        .append(Role::User, "old".repeat(4_001))
+        .append(Role::User, "old".repeat(44_000))
         .await
         .unwrap();
     for index in 0..40 {
@@ -166,7 +166,8 @@ async fn saved_summary_marks_but_retains_messages_and_survives_restart() {
     let context = ContextBuilder::new(reopened).build("继续").await.unwrap();
 
     assert_eq!(context.summary.as_deref(), Some("较早对话的持久摘要"));
-    assert_eq!(context.recent_messages.len(), 8);
+    // 上下文窗口按 128K 字符注入：40 条近期消息全部在窗口内。
+    assert_eq!(context.recent_messages.len(), 40);
 }
 
 #[tokio::test]
@@ -187,7 +188,7 @@ async fn clear_memory_is_atomic_and_preserves_application_settings() {
         .unwrap();
     let repository = MemoryRepository::new(database.clone());
     repository
-        .append(Role::User, "old".repeat(4_001))
+        .append(Role::User, "old".repeat(44_000))
         .await
         .unwrap();
     for index in 0..40 {

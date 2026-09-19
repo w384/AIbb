@@ -111,6 +111,10 @@ describe("SettingsPanel", () => {
     await waitFor(() => expect(saveAibbName).toHaveBeenCalledWith("小团子"));
   });
 
+  async function openTab(label: string) {
+    fireEvent.click(await screen.findByRole("button", { name: label }));
+  }
+
   it("accepts only a newer external profile update", async () => {
     vi.mocked(loadAibbProfile).mockResolvedValue({
       name: "本地资料",
@@ -218,6 +222,7 @@ describe("SettingsPanel", () => {
   it("keeps API settings available when only the stored profile cannot load", async () => {
     vi.mocked(loadAibbProfile).mockRejectedValue({ code: "profileStorageUnavailable" });
     render(<SettingsPanel />);
+    await openTab("API 设置");
 
     expect(await screen.findByLabelText("API 地址")).toHaveValue("https://example.test/v1");
     expect(await screen.findByText("无法访问 AIbb 头像，请稍后再试。")).toBeVisible();
@@ -226,6 +231,7 @@ describe("SettingsPanel", () => {
   it("keeps profile load feedback visible when saving unrelated API settings", async () => {
     vi.mocked(loadAibbProfile).mockRejectedValue({ code: "profileStorageUnavailable" });
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByText("无法访问 AIbb 头像，请稍后再试。");
 
     fireEvent.click(screen.getByRole("button", { name: "仅保存" }));
@@ -265,6 +271,7 @@ describe("SettingsPanel", () => {
 
   it("loads only non-secret settings and keeps the replacement API key empty", async () => {
     render(<SettingsPanel />);
+    await openTab("API 设置");
 
     expect(await screen.findByLabelText("API 地址")).toHaveValue("https://example.test/v1");
     expect(screen.getByLabelText("API Key")).toHaveValue("");
@@ -286,6 +293,7 @@ describe("SettingsPanel", () => {
       apiConfigured: true,
     });
     render(<SettingsPanel />);
+    await openTab("API 设置");
 
     const model = await screen.findByLabelText("模型名称");
     expect(model).toHaveValue("deepseek-v4-flash");
@@ -306,6 +314,7 @@ describe("SettingsPanel", () => {
       message: "The model provider rejected the API credential.",
     });
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByLabelText("API 地址");
 
     fireEvent.click(screen.getByRole("button", { name: "保存并测试" }));
@@ -325,6 +334,7 @@ describe("SettingsPanel", () => {
       }),
     );
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByLabelText("API 地址");
 
     fireEvent.change(screen.getByLabelText("API 地址"), {
@@ -363,6 +373,7 @@ describe("SettingsPanel", () => {
       message: "provider internal detail",
     });
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByLabelText("API 地址");
 
     fireEvent.click(screen.getByRole("button", { name: "保存并测试" }));
@@ -377,6 +388,7 @@ describe("SettingsPanel", () => {
       "deepseek-v4-pro",
     ]);
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByLabelText("API 地址");
 
     fireEvent.change(screen.getByLabelText("API 地址"), {
@@ -396,6 +408,7 @@ describe("SettingsPanel", () => {
       "deepseek-v4-pro",
     ]);
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByLabelText("API 地址");
 
     fireEvent.change(screen.getByLabelText("API 地址"), {
@@ -411,6 +424,7 @@ describe("SettingsPanel", () => {
 
   it("explains that an empty API key keeps the saved credential", async () => {
     render(<SettingsPanel />);
+    await openTab("API 设置");
 
     await screen.findByLabelText("API 地址");
 
@@ -420,6 +434,7 @@ describe("SettingsPanel", () => {
   it("treats a blank replacement key as keep-existing and clears the field after save", async () => {
     vi.mocked(saveSettings).mockResolvedValue();
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByLabelText("API 地址");
 
     fireEvent.change(screen.getByLabelText("API Key"), {
@@ -447,6 +462,7 @@ describe("SettingsPanel", () => {
       apiConfigured: false,
     });
     render(<SettingsPanel />);
+    await openTab("API 设置");
     await screen.findByLabelText("API 地址");
 
     fireEvent.change(screen.getByLabelText("API Key"), {
@@ -475,7 +491,7 @@ describe("SettingsPanel", () => {
 
   it("requires an in-window confirmation before clearing memory", async () => {
     render(<SettingsPanel />);
-    await screen.findByLabelText("API 地址");
+    await screen.findByRole("heading", { name: "AIbb 设置" });
 
     fireEvent.click(screen.getByRole("button", { name: "清除记忆" }));
     expect(clearMemory).not.toHaveBeenCalled();
@@ -487,7 +503,7 @@ describe("SettingsPanel", () => {
 
   it("saves the vocabulary environment from its own section", async () => {
     render(<SettingsPanel />);
-    await screen.findByLabelText("API 地址");
+    await openTab("词汇助手");
 
     fireEvent.change(screen.getByLabelText("词汇助手大环境"), {
       target: { value: " 汽车电子开发 " },
@@ -503,7 +519,7 @@ describe("SettingsPanel", () => {
 
   it("clears only the vocabulary channel after an in-window confirmation", async () => {
     render(<SettingsPanel />);
-    await screen.findByLabelText("API 地址");
+    await openTab("词汇助手");
 
     fireEvent.click(screen.getByRole("button", { name: "清除词汇词库" }));
     expect(clearVocabMemory).not.toHaveBeenCalled();
@@ -514,9 +530,22 @@ describe("SettingsPanel", () => {
     expect(clearMemory).not.toHaveBeenCalled();
   });
 
+  it("clears the vocabulary conversation from the bottom actions next to 清除记忆", async () => {
+    render(<SettingsPanel />);
+    await screen.findByRole("heading", { name: "AIbb 设置" });
+
+    fireEvent.click(screen.getByRole("button", { name: "清除词汇对话" }));
+    expect(clearVocabMemory).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "确认清除词汇词库" })).toBeVisible();
+
+    fireEvent.click(screen.getByRole("button", { name: "确认清除" }));
+    await waitFor(() => expect(clearVocabMemory).toHaveBeenCalledTimes(1));
+    expect(clearMemory).not.toHaveBeenCalled();
+  });
+
   it("offers an explicit exit action from settings", async () => {
     render(<SettingsPanel />);
-    await screen.findByLabelText("API 地址");
+    await screen.findByRole("heading", { name: "AIbb 设置" });
 
     fireEvent.click(screen.getByRole("button", { name: "退出 AIbb" }));
 

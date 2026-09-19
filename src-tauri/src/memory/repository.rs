@@ -16,7 +16,7 @@ use crate::{
     storage::Database,
 };
 
-use super::{CHAT_CHANNEL, VOCAB_CHANNEL};
+use super::{CHAT_CHANNEL, STORAGE_CHAR_LIMIT, VOCAB_CHANNEL};
 
 #[derive(Clone)]
 pub struct MemoryRepository {
@@ -109,6 +109,9 @@ impl MemoryRepository {
             )
             .map_err(|_| memory_error())?;
 
+        // 文档备份保留量：每个通道超过上限的旧消息直接删除。
+        trim_channel_retention(&connection, channel)?;
+
         Ok(Message {
             id,
             role,
@@ -118,19 +121,34 @@ impl MemoryRepository {
         })
     }
 
-    pub(super) async fn context_snapshot_in(
+    /// 按字符预算取该通道最近的消息（显示上限）：最新优先，直到累计字符数
+    /// 超过 `char_budget` 为止，返回按时间正序的消息与窗口内条数。
+    pub(super) async fn context_snapshot_by_chars(
         &self,
         channel: &str,
-        recent_limit: usize,
+        char_budget: usize,
     ) -> Result<ContextSnapshot, AppError> {
         let _operation = self.operation.lock().await;
         let connection = self.database.connection()?;
+        let (recent_messages, recent_count) =
+            recent_messages_by_chars_from_connection(&connection, channel, char_budget)?;
 
         Ok(ContextSnapshot {
-            recent_messages: recent_messages_from_connection(&connection, channel, recent_limit)?,
+            recent_messages,
             newest_assistant_message: newest_assistant_from_connection(&connection, channel)?,
-            summary: newest_summary_from_connection(&connection, channel, recent_limit)?,
+            summary: newest_summary_from_connection(&connection, channel, recent_count)?,
         })
+    }
+
+    /// 按字符预算取该通道的最近消息（正序），供导出词表使用。
+    pub(crate) async fn recent_messages_by_chars_in(
+        &self,
+        channel: &str,
+        char_budget: usize,
+    ) -> Result<Vec<Message>, AppError> {
+        let _operation = self.operation.lock().await;
+        let connection = self.database.connection()?;
+        Ok(recent_messages_by_chars_from_connection(&connection, channel, char_budget)?.0)
     }
 
     /// Recent messages from the ordinary chat channel.
@@ -298,6 +316,82 @@ fn recent_messages_from_connection(
     Ok(messages)
 }
 
+/// 最新优先逐条累加字符数，直到超过 `char_budget`（显示上限）为止；
+/// 返回（按时间正序的消息，窗口内消息条数）。
+fn recent_messages_by_chars_from_connection(
+    connection: &rusqlite::Connection,
+    channel: &str,
+    char_budget: usize,
+) -> Result<(Vec<Message>, usize), AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, role, content, created_at, summarized_at FROM messages \
+             WHERE channel = ?1 \
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .map_err(|_| memory_error())?;
+    let mut rows = statement.query(params![channel]).map_err(|_| memory_error())?;
+    let mut collected: Vec<Message> = Vec::new();
+    let mut total_characters = 0usize;
+
+    while let Some(row) = rows.next().map_err(|_| memory_error())? {
+        let message = message_from_row(row)?;
+        total_characters = total_characters.saturating_add(message.content.chars().count());
+        if total_characters > char_budget {
+            break;
+        }
+        collected.push(message);
+    }
+    let recent_count = collected.len();
+    collected.reverse();
+    Ok((collected, recent_count))
+}
+
+/// 保留每个通道最近的 `STORAGE_CHAR_LIMIT` 字符（文档备份量），超出的旧消息
+/// 在写入时直接删除。
+fn trim_channel_retention(
+    connection: &rusqlite::Connection,
+    channel: &str,
+) -> Result<(), AppError> {
+    trim_channel_retention_with_limit(connection, channel, STORAGE_CHAR_LIMIT)
+}
+
+fn trim_channel_retention_with_limit(
+    connection: &rusqlite::Connection,
+    channel: &str,
+    limit: usize,
+) -> Result<(), AppError> {
+    let mut statement = connection
+        .prepare(
+            "SELECT id, content FROM messages \
+             WHERE channel = ?1 \
+             ORDER BY created_at DESC, rowid DESC",
+        )
+        .map_err(|_| memory_error())?;
+    let mut rows = statement.query(params![channel]).map_err(|_| memory_error())?;
+    let mut total_characters = 0usize;
+    let mut excess_ids: Vec<String> = Vec::new();
+
+    while let Some(row) = rows.next().map_err(|_| memory_error())? {
+        let content: String = row.get(1).map_err(|_| memory_error())?;
+        total_characters = total_characters.saturating_add(content.chars().count());
+        if total_characters > limit {
+            excess_ids.push(row.get(0).map_err(|_| memory_error())?);
+        }
+    }
+    drop(rows);
+    drop(statement);
+
+    for chunk in excess_ids.chunks(400) {
+        let placeholders = chunk.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+        let query = format!("DELETE FROM messages WHERE id IN ({placeholders})");
+        connection
+            .execute(&query, rusqlite::params_from_iter(chunk.iter()))
+            .map_err(|_| memory_error())?;
+    }
+    Ok(())
+}
+
 fn newest_assistant_from_connection(
     connection: &rusqlite::Connection,
     channel: &str,
@@ -410,5 +504,50 @@ mod tests {
 
         repository.clear_memory().await.unwrap();
         assert!(repository.recent_messages(10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn char_budget_window_keeps_only_the_newest_entries() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = MemoryRepository::open(directory.path().join("aibb.sqlite3")).unwrap();
+
+        for index in 0..5 {
+            repository
+                .append_in(VOCAB_CHANNEL, Role::User, format!("词条-{index}（长度十字符）"))
+                .await
+                .unwrap();
+        }
+
+        // 每条约 11 字符，预算 30 只装得下最新的 2 条。
+        let window = repository
+            .recent_messages_by_chars_in(VOCAB_CHANNEL, 30)
+            .await
+            .unwrap();
+        assert_eq!(window.len(), 2);
+        assert_eq!(window[0].content, "词条-3（长度十字符）");
+        assert_eq!(window[1].content, "词条-4（长度十字符）");
+    }
+
+    #[tokio::test]
+    async fn retention_trim_keeps_only_the_recent_characters_and_deletes_oldest() {
+        let directory = tempfile::tempdir().unwrap();
+        let repository = MemoryRepository::open(directory.path().join("aibb.sqlite3")).unwrap();
+
+        for index in 0..3 {
+            repository
+                .append_in(CHAT_CHANNEL, Role::User, format!("m{index}-12345"))
+                .await
+                .unwrap();
+        }
+
+        // 每条 8 字符，上限 16 → 只保留最新的 2 条，最旧 1 条被删除。
+        let connection = repository.database.connection().unwrap();
+        trim_channel_retention_with_limit(&connection, CHAT_CHANNEL, 16).unwrap();
+        drop(connection);
+
+        let remaining = repository.recent_messages(10).await.unwrap();
+        assert_eq!(remaining.len(), 2);
+        assert_eq!(remaining[0].content, "m1-12345");
+        assert_eq!(remaining[1].content, "m2-12345");
     }
 }

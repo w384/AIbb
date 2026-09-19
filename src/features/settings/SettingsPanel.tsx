@@ -48,6 +48,15 @@ const EMPTY_PROFILE: AibbProfile = {
 
 const DEEPSEEK_MODEL = "deepseek-v4-flash";
 
+const SETTING_SECTIONS = [
+  { id: "basic", label: "AIbb 基本资料" },
+  { id: "api", label: "API 设置" },
+  { id: "vocab", label: "词汇助手" },
+  { id: "archive", label: "文件归档" },
+] as const;
+
+type SettingSectionId = (typeof SETTING_SECTIONS)[number]["id"];
+
 const PERSONA_PRESETS = [
   {
     label: "活泼元气",
@@ -140,6 +149,7 @@ export function SettingsPanel() {
   const [archiveInFlight, setArchiveInFlight] = useState(false);
   const [availableModels, setAvailableModels] = useState<string[] | null>(null);
   const [checkingModels, setCheckingModels] = useState(false);
+  const [activeSection, setActiveSection] = useState<SettingSectionId>("basic");
 
   useEffect(() => {
     let disposed = false;
@@ -603,9 +613,23 @@ export function SettingsPanel() {
         <span className="settings-mark" aria-hidden="true">◎</span>
         <div>
           <h1>AIbb 设置</h1>
-          <p>四类设置分开保存，互不影响。</p>
+          <p>四大类设置分开保存，点击下方按钮切换。</p>
         </div>
       </header>
+
+      <nav className="settings-tabs" aria-label="设置分类">
+        {SETTING_SECTIONS.map((tab) => (
+          <button
+            key={tab.id}
+            aria-pressed={activeSection === tab.id}
+            className={`settings-tab${activeSection === tab.id ? " active" : ""}`}
+            type="button"
+            onClick={() => setActiveSection(tab.id)}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </nav>
 
       <form
         className="settings-form"
@@ -613,8 +637,9 @@ export function SettingsPanel() {
         onSubmit={save}
       >
         {/* ① AIbb 基本资料：头像、昵称、性格定制 */}
-        <section className="settings-card" aria-labelledby="basic-heading">
-          <h2 id="basic-heading">AIbb 基本资料</h2>
+        {activeSection === "basic" && (
+          <section className="settings-card" aria-labelledby="basic-heading">
+            <h2 id="basic-heading">AIbb 基本资料</h2>
           <p className="settings-hint">
             头像、昵称与性格定制只保存在这台设备上，保存后从下一条消息开始生效。
           </p>
@@ -669,7 +694,6 @@ export function SettingsPanel() {
               <small>最多 2000 字；留空使用默认的活泼性格。</small>
             </label>
           </div>
-          {profileError && <p className="feedback error" role="alert">{profileError.message}</p>}
           <div className="button-row">
             <button
               className="button primary"
@@ -680,11 +704,13 @@ export function SettingsPanel() {
               保存 AIbb 资料
             </button>
           </div>
-        </section>
+          </section>
+        )}
 
         {/* ② API 设置 */}
-        <section className="settings-card" aria-labelledby="api-heading">
-          <h2 id="api-heading">API 设置</h2>
+        {activeSection === "api" && (
+          <section className="settings-card" aria-labelledby="api-heading">
+            <h2 id="api-heading">API 设置</h2>
           <p className="settings-hint">配置一个大模型，AIbb 就可以出去玩啦。</p>
           <label className="field">
             <span>API 地址</span>
@@ -808,11 +834,13 @@ export function SettingsPanel() {
               保存并测试
             </button>
           </div>
-        </section>
+          </section>
+        )}
 
         {/* ③ 词汇助手 */}
-        <section className="settings-card" aria-labelledby="vocab-heading">
-          <h2 id="vocab-heading">词汇助手</h2>
+        {activeSection === "vocab" && (
+          <section className="settings-card" aria-labelledby="vocab-heading">
+            <h2 id="vocab-heading">词汇助手</h2>
           <p className="settings-hint">
             在对话窗右上角点「词汇」进入词汇助手，输入英文术语即可按标准词条模板收录。
             这里设置它默认工作的大环境（领域），留空使用内置的 Agent-LLM 开发领域。
@@ -847,10 +875,11 @@ export function SettingsPanel() {
               清除词汇词库
             </button>
           </div>
-        </section>
+          </section>
+        )}
 
         {/* ④ 文件归档 */}
-        {archive && (
+        {activeSection === "archive" && archive && (
           <section className="settings-card" aria-labelledby="archive-heading">
             <h2 id="archive-heading">文件归档</h2>
             <p className="settings-hint">
@@ -992,7 +1021,8 @@ export function SettingsPanel() {
         )}
 
         <div className="secondary-actions">
-          <button className="text-button" type="button" onClick={() => setConfirmingClear(true)}>清除记忆</button>
+          <button className="text-button danger" type="button" onClick={() => setConfirmingClear(true)}>清除记忆</button>
+          <button className="text-button danger" type="button" onClick={() => setConfirmingClearVocab(true)}>清除词汇对话</button>
           <button className="text-button danger" type="button" onClick={() => void exitApp()}>退出 AIbb</button>
         </div>
         <footer className="settings-footer">
@@ -1000,6 +1030,7 @@ export function SettingsPanel() {
           <span className="settings-copyright">© 2026 Clink AI · 保留所有权利 · 仅限个人测试使用</span>
         </footer>
       </form>
+      {profileError && <p className="feedback error" role="alert">{profileError.message}</p>}
       {error && <p className="feedback error" role="alert">{error.message}</p>}
       {notice && <p className="feedback success" role="status">{notice}</p>}
       {confirmingClear && (

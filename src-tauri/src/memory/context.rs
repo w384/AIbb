@@ -3,15 +3,7 @@ use crate::{
     error::AppError,
 };
 
-use super::{MemoryRepository, CHAT_CHANNEL, VOCAB_CHANNEL};
-
-/// How many recent messages to inject for the ordinary chat: keep it thin so
-/// the model leans on its own thinking.
-const CHAT_RECENT_MESSAGES: usize = 8;
-/// The vocabulary assistant maintains its virtual glossary (V 编号、重复计数、
-/// 20 条阈值) inside the conversation, so it needs a wide enough window to see
-/// the entries it must count (≈ 40 独立词条).
-const VOCAB_RECENT_MESSAGES: usize = 80;
+use super::{MemoryRepository, CHAT_CHANNEL, CONTEXT_CHAR_BUDGET};
 
 pub struct ContextBuilder {
     repository: MemoryRepository,
@@ -33,15 +25,12 @@ impl ContextBuilder {
         channel: &str,
         current_input: impl Into<String>,
     ) -> Result<MemoryContext, AppError> {
-        // Keep the injected conversation thin for ordinary chat; the
-        // vocabulary channel gets a wide window so the model can actually
-        // count and number the entries it maintains.
-        let recent_limit = if channel == VOCAB_CHANNEL {
-            VOCAB_RECENT_MESSAGES
-        } else {
-            CHAT_RECENT_MESSAGES
-        };
-        let snapshot = self.repository.context_snapshot_in(channel, recent_limit).await?;
+        // 上下文窗口上限：两个通道都注入最近的 128K 字符（显示上限），
+        // 普通聊天额外叠加旧摘要，词汇通道保持薄层直注。
+        let snapshot = self
+            .repository
+            .context_snapshot_by_chars(channel, CONTEXT_CHAR_BUDGET)
+            .await?;
         let last_assistant_paragraph = snapshot
             .newest_assistant_message
             .and_then(|message| last_non_empty_paragraph(&message.content));
@@ -62,9 +51,16 @@ impl ContextBuilder {
         &self,
         channel: &str,
     ) -> Result<Option<SummaryCandidate>, AppError> {
+        // 与上下文窗口保持一致：窗口内的消息不参与摘要，窗口之前的旧内容
+        // 超过阈值才触发压缩。
+        let snapshot = self
+            .repository
+            .context_snapshot_by_chars(channel, CONTEXT_CHAR_BUDGET)
+            .await?;
+        let recent_count = snapshot.recent_messages.len();
         let messages = self
             .repository
-            .unsummarized_before_recent_window_in(channel, 40)
+            .unsummarized_before_recent_window_in(channel, recent_count)
             .await?;
         let total_characters = messages
             .iter()

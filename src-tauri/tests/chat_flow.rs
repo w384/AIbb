@@ -361,7 +361,7 @@ async fn summary_failure_is_non_fatal_and_does_not_erase_the_reply() {
         memory
             .append(
                 aibb_desktop_pet_lib::domain::Role::User,
-                format!("old-{index}-{}", "x".repeat(300)),
+                format!("old-{index}-{}", "x".repeat(3990)),
             )
             .await
             .unwrap();
@@ -400,7 +400,7 @@ async fn successful_summary_uses_the_same_task_key_and_persists_only_sanitized_t
         memory
             .append(
                 aibb_desktop_pet_lib::domain::Role::User,
-                format!("old-{index}-{}", "x".repeat(300)),
+                format!("old-{index}-{}", "x".repeat(3990)),
             )
             .await
             .unwrap();
